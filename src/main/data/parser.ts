@@ -31,8 +31,8 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
       next: raw.next ?? [],
       prev: [],
       reqPoints: raw.reqPoints ?? 0,
-      row: 0,
-      col: 0,
+      row: Math.round(raw.posY / 300),
+      col: Math.round(raw.posX / 300),
       freeNode: raw.freeNode ?? false,
       entryNode: raw.entryNode ?? false,
       subTreeId: raw.subTreeId,
@@ -46,18 +46,6 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
       if (nextNode) {
         nextNode.prev.push(node.id);
       }
-    }
-  }
-
-  // Compute rows/cols from Raidbots posX/posY
-  const rawLookup = new Map(rawNodes.map((n) => [n.id, n]));
-  for (const node of nodes.values()) {
-    const raw = rawLookup.get(node.id);
-    if (raw) {
-      // posX/posY in Raidbots data are layout coordinates
-      // Normalize: row from posY, col from posX
-      node.row = Math.round(raw.posY / 300);
-      node.col = Math.round(raw.posX / 300);
     }
   }
 

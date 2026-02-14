@@ -1,4 +1,8 @@
-import type { BooleanExpr, Constraint } from "../../shared/types";
+import type {
+  BooleanExpr,
+  Constraint,
+  ConstraintType,
+} from "../../shared/types";
 
 export function evaluate(
   expr: BooleanExpr,
@@ -39,22 +43,13 @@ export function checkConstraints(
   return true;
 }
 
-export function getAlwaysNodes(
+export function getNodesByType(
   constraints: Map<number, Constraint>,
+  type: ConstraintType,
 ): Set<number> {
   const result = new Set<number>();
   for (const [nodeId, constraint] of constraints) {
-    if (constraint.type === "always") result.add(nodeId);
-  }
-  return result;
-}
-
-export function getNeverNodes(
-  constraints: Map<number, Constraint>,
-): Set<number> {
-  const result = new Set<number>();
-  for (const [nodeId, constraint] of constraints) {
-    if (constraint.type === "never") result.add(nodeId);
+    if (constraint.type === type) result.add(nodeId);
   }
   return result;
 }

@@ -7,23 +7,15 @@ import type { TalentDataResult } from "../shared/types";
 
 export function registerIPC(): void {
   ipcMain.handle("fetch-talent-data", async (): Promise<TalentDataResult> => {
-    // Try cache first
     const cached = readCache();
-    if (cached) {
-      return {
-        specs: parseSpecializations(cached),
-        version: "live",
-        cached: true,
-      };
-    }
+    const isCached = cached !== null;
+    const raw = cached ?? (await fetchTalentJSON());
+    if (!isCached) writeCache(raw);
 
-    // Fetch fresh data
-    const raw = await fetchTalentJSON();
-    writeCache(raw);
     return {
       specs: parseSpecializations(raw),
       version: "live",
-      cached: false,
+      cached: isCached,
     };
   });
 

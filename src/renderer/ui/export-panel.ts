@@ -1,31 +1,31 @@
 import { state } from "../state";
-import type {
-  SolverResult,
-  Build,
-  TalentTree,
-  TalentNode,
-} from "../../shared/types";
+import type { SolverResult, Build, TalentTree } from "../../shared/types";
 import { MAX_PROFILESETS } from "../../shared/constants";
 
 declare const electronAPI: import("../../shared/types").ElectronAPI;
 
+const TREE_TYPE_NAMES: Record<string, string> = {
+  class: "class_talents",
+  spec: "spec_talents",
+  hero: "hero_talents",
+};
+
 export class ExportPanel {
-  private actionsEl: HTMLElement;
   private generateBtn: HTMLButtonElement;
   private dialogContainer: HTMLElement;
 
   constructor(counterBar: HTMLElement) {
-    this.actionsEl = document.createElement("div");
-    this.actionsEl.className = "export-actions";
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "export-actions";
 
     this.generateBtn = document.createElement("button");
     this.generateBtn.className = "btn btn-primary";
     this.generateBtn.textContent = "Generate";
     this.generateBtn.disabled = true;
     this.generateBtn.addEventListener("click", () => this.generate());
-    this.actionsEl.appendChild(this.generateBtn);
+    actionsEl.appendChild(this.generateBtn);
 
-    counterBar.appendChild(this.actionsEl);
+    counterBar.appendChild(actionsEl);
     this.dialogContainer = document.getElementById("dialog-container")!;
 
     state.subscribe((event) => {
@@ -48,13 +48,10 @@ export class ExportPanel {
       const heroTree = state.activeHeroTree;
       if (heroTree) trees.push(heroTree);
 
-      // Collect builds from solver worker
-      const workerPromises = trees.map((tree) => this.solveTree(tree));
-
-      const treeResults = await Promise.all(workerPromises);
+      const treeResults = await Promise.all(
+        trees.map((tree) => this.solveTree(tree)),
+      );
       const startTime = performance.now();
-
-      // Generate profileset output via Cartesian product
       const output = this.generateProfilesets(treeResults, trees);
       const duration = performance.now() - startTime;
 
@@ -77,7 +74,7 @@ export class ExportPanel {
       worker.postMessage({
         type: "generate",
         config: {
-          tree: this.serializeTree(tree),
+          tree: { ...tree, nodes: Object.fromEntries(tree.nodes) },
           constraints: Object.fromEntries(constraints),
         },
       });
@@ -91,33 +88,16 @@ export class ExportPanel {
     });
   }
 
-  private serializeTree(tree: TalentTree): object {
-    return {
-      ...tree,
-      nodes: Object.fromEntries(tree.nodes),
-    };
-  }
-
   private generateProfilesets(
     results: SolverResult[],
     trees: TalentTree[],
   ): string {
-    // Each result has builds. Cartesian product all builds.
     const allBuilds = results.map((r) => r.builds ?? []);
     if (allBuilds.some((b) => b.length === 0)) return "";
 
-    const treeTypes = trees.map((t) =>
-      t.type === "class"
-        ? "class_talents"
-        : t.type === "spec"
-          ? "spec_talents"
-          : "hero_talents",
-    );
-
+    const treeTypes = trees.map((t) => TREE_TYPE_NAMES[t.type]);
     const lines: string[] = [];
     let index = 0;
-
-    // Cartesian product
     const indices = new Array(allBuilds.length).fill(0);
 
     while (true) {
@@ -139,7 +119,6 @@ export class ExportPanel {
       lines.push(parts.join("\n"));
       index++;
 
-      // Increment indices (rightmost first)
       let carry = true;
       for (let i = allBuilds.length - 1; i >= 0 && carry; i--) {
         indices[i]++;
@@ -156,22 +135,20 @@ export class ExportPanel {
   }
 
   private encodeBuild(build: Build): string {
-    // Format: entry_id:points/entry_id:points/...
-    // Handle both Map (local) and plain object (from worker serialization)
-    const rawEntries =
+    // Entries arrive as plain objects from worker serialization
+    const rawEntries: [number, number][] =
       build.entries instanceof Map
         ? Array.from(build.entries.entries())
-        : Object.entries(build.entries).map(
-            ([k, v]) => [Number(k), v as number] as const,
-          );
-    const sorted = rawEntries.sort(([a], [b]) => a - b);
-    const parts: string[] = [];
-    for (const [entryId, points] of sorted) {
-      if (points > 0) {
-        parts.push(`${entryId}:${points}`);
-      }
-    }
-    return parts.join("/");
+        : Object.entries(build.entries).map(([k, v]) => [
+            Number(k),
+            v as number,
+          ]);
+
+    return rawEntries
+      .filter(([, points]) => points > 0)
+      .sort(([a], [b]) => a - b)
+      .map(([id, points]) => `${id}:${points}`)
+      .join("/");
   }
 
   private showExportDialog(output: string, durationMs: number): void {
@@ -181,7 +158,6 @@ export class ExportPanel {
     const content = document.createElement("div");
     content.className = "export-dialog-content";
 
-    // Header
     const header = document.createElement("div");
     header.className = "export-dialog-header";
     header.innerHTML = `
@@ -190,7 +166,6 @@ export class ExportPanel {
     `;
     content.appendChild(header);
 
-    // Body
     const body = document.createElement("div");
     body.className = "export-dialog-body";
 
@@ -198,11 +173,9 @@ export class ExportPanel {
     textarea.className = "export-output";
     textarea.readOnly = true;
     textarea.value = output;
-    body.appendChild(content);
-    content.appendChild(body);
     body.appendChild(textarea);
+    content.appendChild(body);
 
-    // Footer
     const footer = document.createElement("div");
     footer.className = "export-dialog-footer";
 
@@ -232,10 +205,10 @@ export class ExportPanel {
     saveBtn.textContent = "Save to File";
     saveBtn.addEventListener("click", async () => {
       const spec = state.activeSpec;
-      const name = spec
+      const defaultName = spec
         ? `${spec.className}_${spec.specName}_profiles.simc`
         : "profiles.simc";
-      await electronAPI.saveFile(output, name);
+      await electronAPI.saveFile(output, defaultName);
     });
     actions.appendChild(saveBtn);
 
@@ -243,7 +216,6 @@ export class ExportPanel {
     content.appendChild(footer);
     dialog.appendChild(content);
 
-    // Close behavior
     dialog.addEventListener("click", (e) => {
       if (e.target === dialog) dialog.remove();
     });

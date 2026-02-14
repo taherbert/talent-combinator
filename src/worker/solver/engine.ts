@@ -5,28 +5,23 @@ import type {
   Build,
   SolverResult,
 } from "../../shared/types";
-import { checkConstraints, getAlwaysNodes, getNeverNodes } from "./constraints";
-import { buildKey } from "./encoder";
+import { checkConstraints, getNodesByType } from "./constraints";
+import { encodeBuild } from "./encoder";
 
 interface SolverState {
-  nodes: TalentNode[];
   tiers: Map<number, TalentNode[]>;
   sortedTierKeys: number[];
   constraints: Map<number, Constraint>;
   alwaysNodes: Set<number>;
   neverNodes: Set<number>;
-  maxPoints: number;
 }
 
 function prepareSolver(
   tree: TalentTree,
   constraints: Map<number, Constraint>,
 ): SolverState {
-  const nodes = Array.from(tree.nodes.values());
-
-  // Group by tier
   const tiers = new Map<number, TalentNode[]>();
-  for (const node of nodes) {
+  for (const node of tree.nodes.values()) {
     let tier = tiers.get(node.row);
     if (!tier) {
       tier = [];
@@ -35,23 +30,17 @@ function prepareSolver(
     tier.push(node);
   }
 
-  const sortedTierKeys = Array.from(tiers.keys()).sort((a, b) => a - b);
-
   return {
-    nodes,
     tiers,
-    sortedTierKeys,
+    sortedTierKeys: Array.from(tiers.keys()).sort((a, b) => a - b),
     constraints,
-    alwaysNodes: getAlwaysNodes(constraints),
-    neverNodes: getNeverNodes(constraints),
-    maxPoints: tree.maxPoints,
+    alwaysNodes: getNodesByType(constraints, "always"),
+    neverNodes: getNodesByType(constraints, "never"),
   };
 }
 
 interface PartialBuild {
-  // nodeId → points allocated
   selected: Map<number, number>;
-  // entryId → points (for build output)
   entries: Map<number, number>;
   pointsSpent: number;
 }
@@ -90,32 +79,26 @@ function prerequisitesMet(
   return node.prev.some((prevId) => (selected.get(prevId) ?? 0) > 0);
 }
 
-export function countBuilds(
-  tree: TalentTree,
-  constraints: Map<number, Constraint>,
-): number {
-  const state = prepareSolver(tree, constraints);
-  let count = 0;
+type LeafVisitor = (build: PartialBuild) => void;
 
+function traverse(
+  tree: TalentTree,
+  solverState: SolverState,
+  onLeaf: LeafVisitor,
+): void {
   function dfs(tierIdx: number, build: PartialBuild): void {
-    if (tierIdx >= state.sortedTierKeys.length) {
-      // Check all "always" constraints are satisfied
-      if (checkConstraints(state.constraints, build.selected)) {
-        count++;
+    if (tierIdx >= solverState.sortedTierKeys.length) {
+      if (checkConstraints(solverState.constraints, build.selected)) {
+        onLeaf(build);
       }
       return;
     }
 
-    const tierRow = state.sortedTierKeys[tierIdx];
-    const tierNodes = state.tiers.get(tierRow)!;
+    const tierRow = solverState.sortedTierKeys[tierIdx];
+    if (!gateCheck(tierRow, build.pointsSpent, tree.gates)) return;
 
-    // Check gate
-    if (!gateCheck(tierRow, build.pointsSpent, tree.gates)) {
-      return;
-    }
-
-    // Enumerate all valid selections for this tier's nodes
-    enumerateTier(tierIdx, 0, tierNodes, build, state);
+    const tierNodes = solverState.tiers.get(tierRow)!;
+    enumerateTier(tierIdx, 0, tierNodes, build);
   }
 
   function enumerateTier(
@@ -123,73 +106,75 @@ export function countBuilds(
     nodeIdx: number,
     tierNodes: TalentNode[],
     build: PartialBuild,
-    state: SolverState,
   ): void {
     if (nodeIdx >= tierNodes.length) {
-      // All nodes in this tier assigned, proceed to next tier
       dfs(tierIdx + 1, build);
       return;
     }
 
     const node = tierNodes[nodeIdx];
-
-    // Check if node is accessible (prerequisites)
     const accessible = prerequisitesMet(node, build.selected);
 
-    if (state.neverNodes.has(node.id)) {
-      // Must skip this node
-      if (state.alwaysNodes.has(node.id)) return; // contradiction
+    if (solverState.neverNodes.has(node.id)) {
+      if (solverState.alwaysNodes.has(node.id)) return;
       const b = cloneBuild(build);
       b.selected.set(node.id, 0);
-      enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
+      enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b);
       return;
     }
 
     if (!accessible && !node.freeNode) {
-      // Can't select this node, skip it
+      if (solverState.alwaysNodes.has(node.id)) return;
       const b = cloneBuild(build);
       b.selected.set(node.id, 0);
-      if (state.alwaysNodes.has(node.id)) return; // can't satisfy always constraint
-      enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
+      enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b);
       return;
     }
 
-    // For choice nodes, we select one entry at its max ranks (or skip)
     if (node.type === "choice") {
-      // Option: skip the node
-      if (!state.alwaysNodes.has(node.id)) {
+      if (!solverState.alwaysNodes.has(node.id)) {
         const bSkip = cloneBuild(build);
         bSkip.selected.set(node.id, 0);
-        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, bSkip, state);
+        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, bSkip);
       }
 
-      // Option: select each choice entry
       for (const entry of node.entries) {
         const b = cloneBuild(build);
         b.selected.set(node.id, entry.maxRanks);
         b.entries.set(entry.id, entry.maxRanks);
         b.pointsSpent += entry.maxRanks;
-        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
+        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b);
       }
     } else {
-      // Single node: try ranks 0 through maxRanks
-      const minRank = state.alwaysNodes.has(node.id) ? 1 : 0;
-      const maxRank = node.maxRanks;
+      const minRank = solverState.alwaysNodes.has(node.id) ? 1 : 0;
       const entry = node.entries[0];
 
-      for (let rank = minRank; rank <= maxRank; rank++) {
+      for (let rank = minRank; rank <= node.maxRanks; rank++) {
         const b = cloneBuild(build);
         b.selected.set(node.id, rank);
         if (rank > 0 && entry) {
           b.entries.set(entry.id, rank);
         }
         b.pointsSpent += rank;
-        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
+        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b);
       }
     }
   }
 
   dfs(0, emptyBuild());
+}
+
+export function countBuilds(
+  tree: TalentTree,
+  constraints: Map<number, Constraint>,
+): number {
+  const solverState = prepareSolver(tree, constraints);
+  let count = 0;
+
+  traverse(tree, solverState, () => {
+    count++;
+  });
+
   return count;
 }
 
@@ -199,101 +184,21 @@ export function generateBuilds(
   onProgress?: (current: number) => void,
 ): SolverResult {
   const startTime = performance.now();
-  const state = prepareSolver(tree, constraints);
+  const solverState = prepareSolver(tree, constraints);
   const builds: Build[] = [];
   const seen = new Set<string>();
-  let progressCounter = 0;
 
-  function dfs(tierIdx: number, build: PartialBuild): void {
-    if (tierIdx >= state.sortedTierKeys.length) {
-      if (checkConstraints(state.constraints, build.selected)) {
-        const b: Build = { entries: new Map(build.entries) };
-        const key = buildKey(b);
-        if (!seen.has(key)) {
-          seen.add(key);
-          builds.push(b);
-          progressCounter++;
-          if (onProgress && progressCounter % 100 === 0) {
-            onProgress(progressCounter);
-          }
-        }
-      }
-      return;
-    }
-
-    const tierRow = state.sortedTierKeys[tierIdx];
-    const tierNodes = state.tiers.get(tierRow)!;
-
-    if (!gateCheck(tierRow, build.pointsSpent, tree.gates)) {
-      return;
-    }
-
-    enumerateTier(tierIdx, 0, tierNodes, build, state);
-  }
-
-  function enumerateTier(
-    tierIdx: number,
-    nodeIdx: number,
-    tierNodes: TalentNode[],
-    build: PartialBuild,
-    state: SolverState,
-  ): void {
-    if (nodeIdx >= tierNodes.length) {
-      dfs(tierIdx + 1, build);
-      return;
-    }
-
-    const node = tierNodes[nodeIdx];
-    const accessible = prerequisitesMet(node, build.selected);
-
-    if (state.neverNodes.has(node.id)) {
-      if (state.alwaysNodes.has(node.id)) return;
-      const b = cloneBuild(build);
-      b.selected.set(node.id, 0);
-      enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
-      return;
-    }
-
-    if (!accessible && !node.freeNode) {
-      const b = cloneBuild(build);
-      b.selected.set(node.id, 0);
-      if (state.alwaysNodes.has(node.id)) return;
-      enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
-      return;
-    }
-
-    if (node.type === "choice") {
-      if (!state.alwaysNodes.has(node.id)) {
-        const bSkip = cloneBuild(build);
-        bSkip.selected.set(node.id, 0);
-        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, bSkip, state);
-      }
-
-      for (const entry of node.entries) {
-        const b = cloneBuild(build);
-        b.selected.set(node.id, entry.maxRanks);
-        b.entries.set(entry.id, entry.maxRanks);
-        b.pointsSpent += entry.maxRanks;
-        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
-      }
-    } else {
-      const minRank = state.alwaysNodes.has(node.id) ? 1 : 0;
-      const maxRank = node.maxRanks;
-      const entry = node.entries[0];
-
-      for (let rank = minRank; rank <= maxRank; rank++) {
-        const b = cloneBuild(build);
-        b.selected.set(node.id, rank);
-        if (rank > 0 && entry) {
-          b.entries.set(entry.id, rank);
-        }
-        b.pointsSpent += rank;
-        enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b, state);
+  traverse(tree, solverState, (partial) => {
+    const build: Build = { entries: new Map(partial.entries) };
+    const key = encodeBuild(build);
+    if (!seen.has(key)) {
+      seen.add(key);
+      builds.push(build);
+      if (onProgress && builds.length % 100 === 0) {
+        onProgress(builds.length);
       }
     }
-  }
-
-  dfs(0, emptyBuild());
+  });
 
   return {
     count: builds.length,

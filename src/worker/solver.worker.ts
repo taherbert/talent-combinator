@@ -2,53 +2,40 @@ import type {
   TalentTree,
   TalentNode,
   Constraint,
-  WorkerRequest,
   WorkerResponse,
 } from "../shared/types";
 import { countBuilds, generateBuilds } from "./solver/engine";
 
-// Deserialize tree data from main thread (Maps come as plain objects)
-function deserializeTree(raw: any): TalentTree {
-  const nodes = new Map<number, TalentNode>();
-  const rawNodes = raw.nodes;
-
-  if (rawNodes instanceof Map) {
-    for (const [k, v] of rawNodes) {
-      nodes.set(Number(k), v as TalentNode);
-    }
-  } else {
-    for (const [k, v] of Object.entries(rawNodes)) {
-      nodes.set(Number(k), v as TalentNode);
-    }
+// Structured clone converts Maps to plain objects across worker boundaries
+function toNumberKeyedMap<V>(raw: unknown): Map<number, V> {
+  const map = new Map<number, V>();
+  if (raw instanceof Map) {
+    for (const [k, v] of raw) map.set(Number(k), v as V);
+  } else if (raw && typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw)) map.set(Number(k), v as V);
   }
+  return map;
+}
 
+function deserializeConfig(rawConfig: any): {
+  tree: TalentTree;
+  constraints: Map<number, Constraint>;
+} {
   return {
-    ...raw,
-    nodes,
+    tree: {
+      ...rawConfig.tree,
+      nodes: toNumberKeyedMap<TalentNode>(rawConfig.tree.nodes),
+    },
+    constraints: toNumberKeyedMap<Constraint>(rawConfig.constraints),
   };
 }
 
-function deserializeConstraints(raw: any): Map<number, Constraint> {
-  const constraints = new Map<number, Constraint>();
-  if (raw instanceof Map) {
-    for (const [k, v] of raw) {
-      constraints.set(Number(k), v as Constraint);
-    }
-  } else if (raw && typeof raw === "object") {
-    for (const [k, v] of Object.entries(raw)) {
-      constraints.set(Number(k), v as Constraint);
-    }
-  }
-  return constraints;
-}
-
 self.onmessage = (event: MessageEvent) => {
-  const request = event.data as WorkerRequest;
-  const tree = deserializeTree(request.config.tree);
-  const constraints = deserializeConstraints(request.config.constraints);
+  const { type, config: rawConfig } = event.data;
+  const { tree, constraints } = deserializeConfig(rawConfig);
 
   try {
-    if (request.type === "count") {
+    if (type === "count") {
       const startTime = performance.now();
       const count = countBuilds(tree, constraints);
       const response: WorkerResponse = {
@@ -56,35 +43,27 @@ self.onmessage = (event: MessageEvent) => {
         result: { count, durationMs: performance.now() - startTime },
       };
       self.postMessage(response);
-    } else if (request.type === "generate") {
+    } else if (type === "generate") {
       const result = generateBuilds(tree, constraints, (current) => {
-        const progress: WorkerResponse = {
+        self.postMessage({
           type: "progress",
           current,
           total: 0,
-        };
-        self.postMessage(progress);
+        } as WorkerResponse);
       });
-
-      // Convert Build Maps to plain objects for serialization
-      const serializedBuilds = result.builds?.map((b) => ({
-        entries: Object.fromEntries(b.entries),
-      }));
 
       const response: WorkerResponse = {
         type: "generate",
         result: {
           ...result,
-          builds: serializedBuilds as any,
+          builds: result.builds?.map((b) => ({
+            entries: Object.fromEntries(b.entries),
+          })) as any,
         },
       };
       self.postMessage(response);
     }
   } catch (err) {
-    const response: WorkerResponse = {
-      type: "error",
-      message: String(err),
-    };
-    self.postMessage(response);
+    self.postMessage({ type: "error", message: String(err) } as WorkerResponse);
   }
 };

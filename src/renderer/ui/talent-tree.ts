@@ -1,13 +1,7 @@
 import { state } from "../state";
 import { TalentNodeView } from "./talent-node";
 import { ConditionEditor } from "./condition-editor";
-import type {
-  TalentTree,
-  TalentNode,
-  Constraint,
-  NodeState,
-  ConstraintType,
-} from "../../shared/types";
+import type { TalentTree, TalentNode, NodeState } from "../../shared/types";
 import {
   NODE_SIZE,
   NODE_GAP_X,
@@ -24,10 +18,7 @@ export class TalentTreeView {
   private conditionEditor: ConditionEditor;
   private tooltipEl: HTMLElement;
 
-  constructor(
-    container: HTMLElement,
-    private treeType: "class" | "spec" | "hero",
-  ) {
+  constructor(container: HTMLElement) {
     this.container = container;
     this.conditionEditor = new ConditionEditor();
     this.tooltipEl = document.getElementById("tooltip-container")!;
@@ -58,7 +49,6 @@ export class TalentTreeView {
     const svgContainer = document.createElement("div");
     svgContainer.className = "tree-svg-container";
 
-    // Compute layout bounds
     let minCol = Infinity,
       maxCol = -Infinity;
     let minRow = Infinity,
@@ -72,18 +62,16 @@ export class TalentTreeView {
 
     const width = (maxCol - minCol) * NODE_GAP_X + NODE_SIZE + TREE_PADDING * 2;
     const height =
-      (maxRow - minRow) * NODE_GAP_Y + NODE_SIZE + TREE_PADDING * 2 + 20; // extra for name labels
+      (maxRow - minRow) * NODE_GAP_Y + NODE_SIZE + TREE_PADDING * 2 + 20;
 
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("width", String(width));
     svg.setAttribute("height", String(height));
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-    // Draw connectors first (behind nodes)
     const connectorGroup = document.createElementNS(SVG_NS, "g");
     connectorGroup.classList.add("connectors");
 
-    // Create node views
     const nodeGroup = document.createElementNS(SVG_NS, "g");
     nodeGroup.classList.add("nodes");
 
@@ -104,7 +92,6 @@ export class TalentTreeView {
       nodeGroup.appendChild(view.group);
     }
 
-    // Draw connectors between nodes
     for (const node of tree.nodes.values()) {
       const fromView = this.nodeViews.get(node.id);
       if (!fromView) continue;
@@ -130,7 +117,6 @@ export class TalentTreeView {
       }
     }
 
-    // Draw tier gates
     const gateGroup = document.createElementNS(SVG_NS, "g");
     for (const gate of tree.gates) {
       const y =
@@ -168,24 +154,13 @@ export class TalentTreeView {
   }
 
   private handleClick(node: TalentNode, _event: MouseEvent): void {
-    const constraint = state.constraints.get(node.id);
-    const currentType = constraint?.type;
+    const currentType = state.constraints.get(node.id)?.type;
 
-    // Cycle: unselected → always → never → unselected
-    let newType: ConstraintType | null;
+    // Cycle: unset -> always -> never -> unset
     if (!currentType) {
-      newType = "always";
+      state.setConstraint({ nodeId: node.id, type: "always" });
     } else if (currentType === "always") {
-      newType = "never";
-    } else {
-      newType = null;
-    }
-
-    if (newType) {
-      state.setConstraint({
-        nodeId: node.id,
-        type: newType,
-      });
+      state.setConstraint({ nodeId: node.id, type: "never" });
     } else {
       state.removeConstraint(node.id);
     }
@@ -237,13 +212,12 @@ export class TalentTreeView {
 
     const constraint = state.constraints.get(node.id);
     if (constraint) {
-      const cDiv = document.createElement("div");
-      cDiv.className = "tooltip-rank";
-      cDiv.textContent = `Status: ${constraint.type}`;
-      tooltip.appendChild(cDiv);
+      const statusDiv = document.createElement("div");
+      statusDiv.className = "tooltip-rank";
+      statusDiv.textContent = `Status: ${constraint.type}`;
+      tooltip.appendChild(statusDiv);
     }
 
-    // Position tooltip near mouse
     tooltip.style.left = `${event.clientX + 12}px`;
     tooltip.style.top = `${event.clientY + 12}px`;
 
@@ -255,22 +229,9 @@ export class TalentTreeView {
     if (!this.tree) return;
 
     for (const [nodeId, view] of this.nodeViews) {
-      const constraint = state.constraints.get(nodeId);
-      let nodeState: NodeState;
-
-      if (constraint) {
-        nodeState = constraint.type;
-      } else {
-        nodeState = "available";
-      }
-
+      const nodeState: NodeState =
+        state.constraints.get(nodeId)?.type ?? "available";
       view.setState(nodeState);
     }
-  }
-
-  clear(): void {
-    this.container.innerHTML = "";
-    this.nodeViews.clear();
-    this.tree = null;
   }
 }

@@ -65,17 +65,14 @@ class AppState {
 
   selectHeroTree(tree: TalentTree): void {
     this._activeHeroTree = tree;
-    // Clear hero constraints when switching hero trees
-    for (const [nodeId, constraint] of this._constraints) {
-      const heroNodes = tree.nodes;
-      if (!heroNodes.has(nodeId)) {
-        // Check if it was a hero node from another tree
-        const wasHero = this._activeSpec?.heroTrees.some(
-          (ht) => ht !== tree && ht.nodes.has(nodeId),
-        );
-        if (wasHero) {
-          this._constraints.delete(nodeId);
-        }
+    // Remove constraints belonging to other hero trees
+    for (const [nodeId] of this._constraints) {
+      if (tree.nodes.has(nodeId)) continue;
+      const fromOtherHero = this._activeSpec?.heroTrees.some(
+        (ht) => ht !== tree && ht.nodes.has(nodeId),
+      );
+      if (fromOtherHero) {
+        this._constraints.delete(nodeId);
       }
     }
     this.emit({ type: "hero-tree-selected", tree });

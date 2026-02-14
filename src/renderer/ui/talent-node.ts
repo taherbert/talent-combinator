@@ -1,20 +1,11 @@
-import type {
-  TalentNode,
-  NodeState,
-  Constraint,
-  ConstraintType,
-} from "../../shared/types";
+import type { TalentNode, NodeState } from "../../shared/types";
 import { NODE_SIZE } from "../../shared/constants";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 export class TalentNodeView {
   readonly group: SVGGElement;
-  private bgShape: SVGElement;
-  private rankText: SVGTextElement;
-  private nameText: SVGTextElement;
   private conditionBadge: SVGTextElement;
-  private _state: NodeState = "available";
 
   constructor(
     readonly node: TalentNode,
@@ -32,16 +23,11 @@ export class TalentNodeView {
     this.group.classList.add("talent-node");
     this.group.setAttribute("transform", `translate(${x}, ${y})`);
 
-    // Background shape
-    if (node.type === "choice") {
-      this.bgShape = this.createOctagon();
-    } else {
-      this.bgShape = this.createRoundedRect();
-    }
-    this.bgShape.classList.add("node-bg");
-    this.group.appendChild(this.bgShape);
+    const bgShape =
+      node.type === "choice" ? this.createOctagon() : this.createRoundedRect();
+    bgShape.classList.add("node-bg");
+    this.group.appendChild(bgShape);
 
-    // Icon placeholder (colored circle for now, real icons require Wowhead URLs)
     const iconBg = document.createElementNS(SVG_NS, "rect");
     iconBg.setAttribute("x", String(-NODE_SIZE / 2 + 4));
     iconBg.setAttribute("y", String(-NODE_SIZE / 2 + 4));
@@ -52,17 +38,15 @@ export class TalentNodeView {
     iconBg.classList.add("node-icon");
     this.group.appendChild(iconBg);
 
-    // Rank badge
-    this.rankText = document.createElementNS(SVG_NS, "text");
-    this.rankText.classList.add("rank-badge");
-    this.rankText.setAttribute("x", String(NODE_SIZE / 2 - 2));
-    this.rankText.setAttribute("y", String(NODE_SIZE / 2 + 2));
+    const rankText = document.createElementNS(SVG_NS, "text");
+    rankText.classList.add("rank-badge");
+    rankText.setAttribute("x", String(NODE_SIZE / 2 - 2));
+    rankText.setAttribute("y", String(NODE_SIZE / 2 + 2));
     if (node.maxRanks > 1) {
-      this.rankText.textContent = `0/${node.maxRanks}`;
+      rankText.textContent = `0/${node.maxRanks}`;
     }
-    this.group.appendChild(this.rankText);
+    this.group.appendChild(rankText);
 
-    // Condition badge ("?")
     this.conditionBadge = document.createElementNS(SVG_NS, "text");
     this.conditionBadge.classList.add("condition-badge");
     this.conditionBadge.setAttribute("x", "0");
@@ -71,15 +55,14 @@ export class TalentNodeView {
     this.conditionBadge.style.display = "none";
     this.group.appendChild(this.conditionBadge);
 
-    // Name label below node
-    this.nameText = document.createElementNS(SVG_NS, "text");
-    this.nameText.classList.add("node-name");
-    this.nameText.setAttribute("x", "0");
-    this.nameText.setAttribute("y", String(NODE_SIZE / 2 + 16));
-    this.nameText.textContent = this.truncateName(node.name);
-    this.group.appendChild(this.nameText);
+    const nameText = document.createElementNS(SVG_NS, "text");
+    nameText.classList.add("node-name");
+    nameText.setAttribute("x", "0");
+    nameText.setAttribute("y", String(NODE_SIZE / 2 + 16));
+    nameText.textContent =
+      node.name.length > 12 ? node.name.slice(0, 11) + "\u2026" : node.name;
+    this.group.appendChild(nameText);
 
-    // Events
     this.group.addEventListener("click", (e) => this.onClick(node, e));
     this.group.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -106,7 +89,7 @@ export class TalentNodeView {
   private createOctagon(): SVGPolygonElement {
     const poly = document.createElementNS(SVG_NS, "polygon");
     const s = NODE_SIZE / 2;
-    const c = s * 0.3; // corner cut
+    const c = s * 0.3;
     const points = [
       `${-s + c},${-s}`,
       `${s - c},${-s}`,
@@ -121,12 +104,7 @@ export class TalentNodeView {
     return poly;
   }
 
-  private truncateName(name: string): string {
-    return name.length > 12 ? name.slice(0, 11) + "\u2026" : name;
-  }
-
   setState(nodeState: NodeState): void {
-    this._state = nodeState;
     this.group.classList.remove(
       "locked",
       "available",
@@ -137,16 +115,6 @@ export class TalentNodeView {
     this.group.classList.add(nodeState);
     this.conditionBadge.style.display =
       nodeState === "conditional" ? "" : "none";
-  }
-
-  setRank(current: number): void {
-    if (this.node.maxRanks > 1) {
-      this.rankText.textContent = `${current}/${this.node.maxRanks}`;
-    }
-  }
-
-  get currentState(): NodeState {
-    return this._state;
   }
 
   get centerX(): number {

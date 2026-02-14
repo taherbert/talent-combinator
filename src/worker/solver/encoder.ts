@@ -10,7 +10,3 @@ export function encodeBuild(build: Build): string {
   }
   return parts.join("/");
 }
-
-export function buildKey(build: Build): string {
-  return encodeBuild(build);
-}

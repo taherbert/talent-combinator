@@ -87,7 +87,9 @@ export class ConditionEditor {
     // Header
     const header = document.createElement("div");
     header.className = "condition-popover-header";
-    header.innerHTML = `<span>Include "${this.currentNode.name}" when...</span>`;
+    const headerSpan = document.createElement("span");
+    headerSpan.textContent = `Include "${this.currentNode.name}" when...`;
+    header.appendChild(headerSpan);
     this.popover.appendChild(header);
 
     // Body
@@ -123,8 +125,13 @@ export class ConditionEditor {
     for (const cond of this.conditions) {
       const chip = document.createElement("div");
       chip.className = "condition-talent-chip";
-      chip.innerHTML = `<span>${cond.name}</span><span class="remove">&times;</span>`;
-      chip.querySelector(".remove")!.addEventListener("click", () => {
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = cond.name;
+      const removeSpan = document.createElement("span");
+      removeSpan.className = "remove";
+      removeSpan.textContent = "\u00d7";
+      chip.append(nameSpan, removeSpan);
+      removeSpan.addEventListener("click", () => {
         this.conditions = this.conditions.filter(
           (c) => c.nodeId !== cond.nodeId,
         );

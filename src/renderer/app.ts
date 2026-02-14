@@ -8,20 +8,15 @@ import { SOLVER_DEBOUNCE_MS } from "../shared/constants";
 
 declare const electronAPI: import("../shared/types").ElectronAPI;
 
-// Initialize UI components
 const sidebar = document.getElementById("sidebar")!;
 const mainContent = document.getElementById("main-content")!;
 const counterBar = document.getElementById("counter-bar")!;
 
-const classPicker = new ClassPicker(sidebar);
-const counter = new CombinationCounter(counterBar);
-const exportPanel = new ExportPanel(counterBar);
+// Components self-manage via DOM attachment and state subscriptions
+void new ClassPicker(sidebar);
+void new CombinationCounter(counterBar);
+void new ExportPanel(counterBar);
 
-let classTreeView: TalentTreeView | null = null;
-let specTreeView: TalentTreeView | null = null;
-let heroTreeView: TalentTreeView | null = null;
-
-// Solver workers for live counting
 let countWorkers: Worker[] = [];
 let countDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -32,21 +27,15 @@ function renderTrees(
 ): void {
   mainContent.innerHTML = "";
 
-  // Class tree
   const classContainer = document.createElement("div");
   mainContent.appendChild(classContainer);
-  classTreeView = new TalentTreeView(classContainer, "class");
-  classTreeView.render(classTree);
+  new TalentTreeView(classContainer).render(classTree);
 
-  // Spec tree
   const specContainer = document.createElement("div");
   mainContent.appendChild(specContainer);
-  specTreeView = new TalentTreeView(specContainer, "spec");
-  specTreeView.render(specTree);
+  new TalentTreeView(specContainer).render(specTree);
 
-  // Hero tree section
   if (heroTree) {
-    // Hero tree selector
     const spec = state.activeSpec!;
     if (spec.heroTrees.length > 1) {
       const selector = document.createElement("div");
@@ -63,11 +52,14 @@ function renderTrees(
 
     const heroContainer = document.createElement("div");
     mainContent.appendChild(heroContainer);
-    heroTreeView = new TalentTreeView(heroContainer, "hero");
-    heroTreeView.render(heroTree);
+    new TalentTreeView(heroContainer).render(heroTree);
   }
 
   scheduleCount();
+}
+
+function serializeTree(tree: TalentTree): object {
+  return { ...tree, nodes: Object.fromEntries(tree.nodes) };
 }
 
 function scheduleCount(): void {
@@ -76,7 +68,6 @@ function scheduleCount(): void {
 }
 
 function runCount(): void {
-  // Terminate previous workers
   for (const w of countWorkers) w.terminate();
   countWorkers = [];
 
@@ -127,6 +118,10 @@ function runCount(): void {
           state.updateCounts(counts);
         }
         worker.terminate();
+      } else if (event.data.type === "error") {
+        console.error(`Solver error for ${key}:`, event.data.message);
+        pending--;
+        worker.terminate();
       }
     };
 
@@ -134,14 +129,6 @@ function runCount(): void {
   }
 }
 
-function serializeTree(tree: TalentTree): object {
-  return {
-    ...tree,
-    nodes: Object.fromEntries(tree.nodes),
-  };
-}
-
-// Event handling
 state.subscribe((event) => {
   switch (event.type) {
     case "spec-selected": {
@@ -165,7 +152,6 @@ state.subscribe((event) => {
   }
 });
 
-// Boot
 async function init(): Promise<void> {
   mainContent.innerHTML =
     '<div class="loading-state"><div class="loading-spinner"></div><p>Loading talent data...</p></div>';
