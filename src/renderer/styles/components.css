@@ -1,0 +1,433 @@
+/* Class/Spec picker */
+.class-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.class-group {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.class-group-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background var(--transition-fast);
+}
+
+.class-group-header:hover {
+  background: var(--bg-tertiary);
+}
+
+.spec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 12px;
+}
+
+.spec-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.spec-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.spec-item.active {
+  background: var(--color-blue-dim);
+  color: var(--color-blue);
+}
+
+/* Hero tree selector */
+.hero-selector {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.hero-selector button {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  transition: all var(--transition-fast);
+}
+
+.hero-selector button:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.hero-selector button.active {
+  color: var(--color-blue);
+  border-color: var(--color-blue);
+  background: var(--color-blue-dim);
+}
+
+/* Talent node SVG styles */
+.talent-node {
+  cursor: pointer;
+  transition: opacity var(--transition-normal);
+}
+
+.talent-node .node-bg {
+  fill: var(--bg-tertiary);
+  stroke: var(--node-available);
+  stroke-width: 2;
+  transition: all var(--transition-normal);
+}
+
+.talent-node.locked .node-bg {
+  stroke: var(--node-locked);
+  fill: var(--bg-primary);
+}
+
+.talent-node.locked {
+  opacity: 0.4;
+}
+
+.talent-node.always .node-bg {
+  stroke: var(--node-always);
+}
+
+.talent-node.never .node-bg {
+  stroke: var(--node-never);
+}
+
+.talent-node.never .node-icon {
+  opacity: 0.5;
+}
+
+.talent-node.conditional .node-bg {
+  stroke: var(--node-conditional);
+}
+
+.talent-node .rank-badge {
+  fill: var(--text-primary);
+  font-size: 10px;
+  font-weight: 700;
+  text-anchor: end;
+}
+
+.talent-node .condition-badge {
+  fill: var(--color-amber);
+  font-size: 9px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.talent-node .node-name {
+  fill: var(--text-primary);
+  font-size: 10px;
+  text-anchor: middle;
+}
+
+/* Connector lines */
+.connector {
+  fill: none;
+  stroke: var(--border-default);
+  stroke-width: 2;
+  transition: stroke var(--transition-normal);
+}
+
+.connector.active {
+  stroke: var(--text-secondary);
+}
+
+/* Tier gate */
+.tier-gate line {
+  stroke: var(--border-default);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.tier-gate text {
+  fill: var(--text-muted);
+  font-size: 11px;
+  text-anchor: middle;
+}
+
+/* Tooltip */
+.talent-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 300px;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  font-size: 13px;
+}
+
+.talent-tooltip .tooltip-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.talent-tooltip .tooltip-rank {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* Combination counter */
+.count-display {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.count-value {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.count-value.green {
+  color: var(--color-green);
+}
+.count-value.yellow {
+  color: var(--color-amber);
+}
+.count-value.red {
+  color: var(--color-red);
+}
+
+.count-breakdown {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.count-warning {
+  font-size: 12px;
+  color: var(--color-red);
+  font-weight: 600;
+}
+
+/* Export panel */
+.export-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+}
+
+.btn-primary {
+  background: var(--color-green);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+.btn-secondary:hover {
+  border-color: var(--text-muted);
+}
+
+/* Export dialog */
+.export-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-overlay);
+}
+
+.export-dialog-content {
+  width: 700px;
+  max-height: 80vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.export-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.export-dialog-header h2 {
+  font-size: 16px;
+}
+
+.export-dialog-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.export-output {
+  width: 100%;
+  min-height: 300px;
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.export-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-default);
+}
+
+.export-stats {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Progress bar */
+.progress-bar {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--color-green);
+  transition: width 100ms linear;
+}
+
+/* Condition editor */
+.condition-popover {
+  position: fixed;
+  z-index: 200;
+  width: 360px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.condition-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.condition-popover-body {
+  padding: 12px 16px;
+}
+
+.condition-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.condition-op-toggle {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.condition-op-toggle.and {
+  background: var(--color-blue-dim);
+  color: var(--color-blue);
+}
+
+.condition-op-toggle.or {
+  background: var(--color-amber-dim);
+  color: var(--color-amber);
+}
+
+.condition-talent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.condition-talent-chip:hover {
+  border-color: var(--text-muted);
+}
+
+.condition-talent-chip .remove {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.condition-add-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.condition-popover-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-default);
+}
