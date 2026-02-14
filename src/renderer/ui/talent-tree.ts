@@ -14,6 +14,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 export class TalentTreeView {
   private container: HTMLElement;
   private nodeViews = new Map<number, TalentNodeView>();
+  private connectors = new Map<string, SVGLineElement>();
   private tree: TalentTree | null = null;
   private conditionEditor: ConditionEditor;
   private tooltipEl: HTMLElement;
@@ -29,6 +30,7 @@ export class TalentTreeView {
         event.type === "constraint-removed"
       ) {
         this.updateNodeStates();
+        this.updateConnectors();
       }
     });
   }
@@ -36,19 +38,27 @@ export class TalentTreeView {
   render(tree: TalentTree): void {
     this.tree = tree;
     this.nodeViews.clear();
+    this.connectors.clear();
     this.container.innerHTML = "";
 
     const section = document.createElement("div");
     section.className = "tree-section";
 
+    // Header with tree name
     const header = document.createElement("div");
     header.className = "tree-section-header";
-    header.innerHTML = `<span>${tree.type} talents</span><span>${tree.totalNodes} nodes</span>`;
+    const title = tree.subTreeName ?? `${tree.type} talents`;
+    const titleSpan = document.createElement("span");
+    titleSpan.textContent = title;
+    const countSpan = document.createElement("span");
+    countSpan.textContent = `${tree.totalNodes} nodes · ${tree.maxPoints} points`;
+    header.append(titleSpan, countSpan);
     section.appendChild(header);
 
     const svgContainer = document.createElement("div");
     svgContainer.className = "tree-svg-container";
 
+    // Compute layout bounds
     let minCol = Infinity,
       maxCol = -Infinity;
     let minRow = Infinity,
@@ -69,9 +79,42 @@ export class TalentTreeView {
     svg.setAttribute("height", String(height));
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
+    // Tier gates (behind everything)
+    const gateGroup = document.createElementNS(SVG_NS, "g");
+    for (const gate of tree.gates) {
+      const y =
+        (gate.row - minRow) * NODE_GAP_Y +
+        TREE_PADDING -
+        NODE_GAP_Y / 2 +
+        NODE_SIZE / 2;
+
+      // Skip gates at or above the first row (no gate needed before top talents)
+      if (gate.row <= minRow) continue;
+
+      const g = document.createElementNS(SVG_NS, "g");
+      g.classList.add("tier-gate");
+
+      const line = document.createElementNS(SVG_NS, "line");
+      line.setAttribute("x1", "0");
+      line.setAttribute("y1", String(y));
+      line.setAttribute("x2", String(width));
+      line.setAttribute("y2", String(y));
+      g.appendChild(line);
+
+      const text = document.createElementNS(SVG_NS, "text");
+      text.setAttribute("x", String(width / 2));
+      text.setAttribute("y", String(y - 4));
+      text.textContent = `${gate.requiredPoints} points required`;
+      g.appendChild(text);
+
+      gateGroup.appendChild(g);
+    }
+
+    // Connectors (straight lines)
     const connectorGroup = document.createElementNS(SVG_NS, "g");
     connectorGroup.classList.add("connectors");
 
+    // Nodes
     const nodeGroup = document.createElementNS(SVG_NS, "g");
     nodeGroup.classList.add("nodes");
 
@@ -92,6 +135,7 @@ export class TalentTreeView {
       nodeGroup.appendChild(view.group);
     }
 
+    // Draw straight connector lines
     for (const node of tree.nodes.values()) {
       const fromView = this.nodeViews.get(node.id);
       if (!fromView) continue;
@@ -100,47 +144,17 @@ export class TalentTreeView {
         const toView = this.nodeViews.get(nextId);
         if (!toView) continue;
 
-        const path = document.createElementNS(SVG_NS, "path");
-        path.classList.add("connector");
+        const line = document.createElementNS(SVG_NS, "line");
+        line.classList.add("connector");
+        line.setAttribute("x1", String(fromView.centerX));
+        line.setAttribute("y1", String(fromView.centerY + NODE_SIZE / 2));
+        line.setAttribute("x2", String(toView.centerX));
+        line.setAttribute("y2", String(toView.centerY - NODE_SIZE / 2));
 
-        const x1 = fromView.centerX;
-        const y1 = fromView.centerY + NODE_SIZE / 2;
-        const x2 = toView.centerX;
-        const y2 = toView.centerY - NODE_SIZE / 2;
-        const cy = (y1 + y2) / 2;
-
-        path.setAttribute(
-          "d",
-          `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`,
-        );
-        connectorGroup.appendChild(path);
+        const key = `${node.id}-${nextId}`;
+        this.connectors.set(key, line);
+        connectorGroup.appendChild(line);
       }
-    }
-
-    const gateGroup = document.createElementNS(SVG_NS, "g");
-    for (const gate of tree.gates) {
-      const y =
-        (gate.row - minRow) * NODE_GAP_Y +
-        TREE_PADDING -
-        NODE_GAP_Y / 2 +
-        NODE_SIZE / 2;
-      const g = document.createElementNS(SVG_NS, "g");
-      g.classList.add("tier-gate");
-
-      const line = document.createElementNS(SVG_NS, "line");
-      line.setAttribute("x1", "0");
-      line.setAttribute("y1", String(y));
-      line.setAttribute("x2", String(width));
-      line.setAttribute("y2", String(y));
-      g.appendChild(line);
-
-      const text = document.createElementNS(SVG_NS, "text");
-      text.setAttribute("x", String(width / 2));
-      text.setAttribute("y", String(y - 4));
-      text.textContent = `${gate.requiredPoints} points required`;
-      g.appendChild(text);
-
-      gateGroup.appendChild(g);
     }
 
     svg.appendChild(gateGroup);
@@ -151,6 +165,7 @@ export class TalentTreeView {
     this.container.appendChild(section);
 
     this.updateNodeStates();
+    this.updateConnectors();
   }
 
   private handleClick(node: TalentNode, _event: MouseEvent): void {
@@ -232,6 +247,27 @@ export class TalentTreeView {
       const nodeState: NodeState =
         state.constraints.get(nodeId)?.type ?? "available";
       view.setState(nodeState);
+    }
+  }
+
+  private updateConnectors(): void {
+    if (!this.tree) return;
+
+    for (const [key, line] of this.connectors) {
+      const [fromIdStr, toIdStr] = key.split("-");
+      const fromState = state.constraints.get(Number(fromIdStr))?.type;
+      const toState = state.constraints.get(Number(toIdStr))?.type;
+
+      line.classList.remove("active", "from-always", "from-never");
+
+      // Highlight connector when source node is selected (always)
+      if (fromState === "always") {
+        line.classList.add("active", "from-always");
+      } else if (fromState === "never") {
+        line.classList.add("from-never");
+      } else if (fromState || toState) {
+        line.classList.add("active");
+      }
     }
   }
 }

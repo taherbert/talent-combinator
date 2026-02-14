@@ -18,18 +18,26 @@ function parseEntry(raw: RawTalentNode["entries"][number]): TalentEntry {
   };
 }
 
+function nodeName(raw: RawTalentNode): string {
+  // Node name from data, fallback to first entry name
+  if (raw.name) return raw.name;
+  if (raw.entries.length > 0 && raw.entries[0].name) return raw.entries[0].name;
+  return `Node ${raw.id}`;
+}
+
 function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
   const nodes = new Map<number, TalentNode>();
 
   for (const raw of rawNodes) {
     nodes.set(raw.id, {
       id: raw.id,
-      name: raw.name,
+      name: nodeName(raw),
+      icon: raw.icon ?? raw.entries[0]?.icon ?? "",
       type: raw.entries.length > 1 ? "choice" : "single",
       maxRanks: raw.maxRanks,
       entries: raw.entries.map(parseEntry),
       next: raw.next ?? [],
-      prev: [],
+      prev: raw.prev ?? [],
       reqPoints: raw.reqPoints ?? 0,
       row: Math.round(raw.posY / 300),
       col: Math.round(raw.posX / 300),
@@ -39,11 +47,11 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
     });
   }
 
-  // Build reverse edges
+  // Supplement reverse edges if not present in raw data
   for (const node of nodes.values()) {
     for (const nextId of node.next) {
       const nextNode = nodes.get(nextId);
-      if (nextNode) {
+      if (nextNode && !nextNode.prev.includes(node.id)) {
         nextNode.prev.push(node.id);
       }
     }
@@ -53,18 +61,22 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
 }
 
 function computeGates(nodes: Map<number, TalentNode>): TierGate[] {
-  const gates = new Map<number, number>();
+  // Deduplicate by requiredPoints value (one gate per unique point threshold)
+  const gatesByPoints = new Map<number, TierGate>();
   for (const node of nodes.values()) {
     if (node.reqPoints > 0) {
-      const existing = gates.get(node.row);
-      if (existing === undefined || node.reqPoints > existing) {
-        gates.set(node.row, node.reqPoints);
+      const existing = gatesByPoints.get(node.reqPoints);
+      if (!existing || node.row < existing.row) {
+        gatesByPoints.set(node.reqPoints, {
+          row: node.row,
+          requiredPoints: node.reqPoints,
+        });
       }
     }
   }
-  return Array.from(gates.entries())
-    .map(([row, requiredPoints]) => ({ row, requiredPoints }))
-    .sort((a, b) => a.row - b.row);
+  return Array.from(gatesByPoints.values()).sort(
+    (a, b) => a.requiredPoints - b.requiredPoints,
+  );
 }
 
 function computeMaxPoints(nodes: Map<number, TalentNode>): number {
@@ -95,6 +107,18 @@ function buildTree(
 
 export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
   return rawData.map((raw) => {
+    // Build hero subtree name lookup from subTreeNodes
+    const heroNameMap = new Map<number, string>();
+    if (raw.subTreeNodes) {
+      for (const stNode of raw.subTreeNodes) {
+        for (const entry of stNode.entries) {
+          if (entry.traitSubTreeId && entry.name) {
+            heroNameMap.set(entry.traitSubTreeId, entry.name);
+          }
+        }
+      }
+    }
+
     // Group hero nodes by subTreeId
     const heroGroups = new Map<number, RawTalentNode[]>();
     for (const node of raw.heroNodes) {
@@ -108,7 +132,7 @@ export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
     }
 
     const heroTrees = Array.from(heroGroups.entries()).map(([stId, nodes]) =>
-      buildTree(nodes, "hero", stId),
+      buildTree(nodes, "hero", stId, heroNameMap.get(stId)),
     );
 
     return {

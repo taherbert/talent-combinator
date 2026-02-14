@@ -1,6 +1,8 @@
 export const RAIDBOTS_TALENT_URL =
   "https://mimiron.raidbots.com/static/data/live/talents.json";
 
+export const ICON_CDN_URL = "https://wow.zamimg.com/images/wow/icons/medium";
+
 export const MAX_PROFILESETS = 6399;
 
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours

@@ -48,7 +48,47 @@
   padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
+}
+
+/* Instructions bar */
+.instructions-bar {
+  padding: 8px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.instructions-bar strong {
+  color: var(--text-primary);
+}
+
+.instructions-bar em {
+  font-style: normal;
+  font-weight: 600;
+}
+
+.instructions-bar .c-green {
+  color: var(--color-green);
+}
+
+.instructions-bar .c-red {
+  color: var(--color-red);
+}
+
+/* Horizontal tree layout */
+.tree-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.tree-column {
+  flex: 1 1 450px;
+  min-width: 0;
 }
 
 .counter-bar {

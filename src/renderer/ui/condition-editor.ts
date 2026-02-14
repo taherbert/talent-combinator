@@ -96,7 +96,7 @@ export class ConditionEditor {
     const body = document.createElement("div");
     body.className = "condition-popover-body";
 
-    // Operator toggle
+    // Operator toggle (shown when 2+ conditions exist)
     if (this.conditions.length > 1) {
       const row = document.createElement("div");
       row.className = "condition-row";
@@ -104,6 +104,7 @@ export class ConditionEditor {
       const toggle = document.createElement("button");
       toggle.className = `condition-op-toggle ${this.operator.toLowerCase()}`;
       toggle.textContent = this.operator;
+      toggle.title = "Click to toggle between AND / OR";
       toggle.addEventListener("click", () => {
         this.operator = this.operator === "AND" ? "OR" : "AND";
         this.renderPopover();
@@ -114,11 +115,18 @@ export class ConditionEditor {
       label.style.cssText = "font-size: 12px; color: var(--text-secondary)";
       label.textContent =
         this.operator === "AND"
-          ? "All of these talents are selected"
-          : "Any of these talents is selected";
+          ? "All of these talents must be selected"
+          : "At least one of these talents must be selected";
       row.appendChild(label);
 
       body.appendChild(row);
+    } else if (this.conditions.length === 0) {
+      const hint = document.createElement("div");
+      hint.style.cssText =
+        "font-size: 12px; color: var(--text-muted); padding: 4px 0;";
+      hint.textContent =
+        "Add talents below. Use AND (all required) or OR (any required) to combine them.";
+      body.appendChild(hint);
     }
 
     // Condition chips

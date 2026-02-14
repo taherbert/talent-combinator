@@ -11,9 +11,11 @@ export interface RawTalentEntry {
 export interface RawTalentNode {
   id: number;
   name: string;
+  icon: string;
   type: string;
   entries: RawTalentEntry[];
   next: number[];
+  prev: number[];
   reqPoints: number;
   maxRanks: number;
   freeNode: boolean;
@@ -23,12 +25,28 @@ export interface RawTalentNode {
   subTreeId?: number;
 }
 
+export interface RawSubTreeEntry {
+  id: number;
+  type: string;
+  name: string;
+  traitSubTreeId: number;
+  nodes: number[];
+}
+
+export interface RawSubTreeNode {
+  id: number;
+  name: string;
+  type: string;
+  entries: RawSubTreeEntry[];
+}
+
 export interface RawSpecData {
   className: string;
   specName: string;
   classNodes: RawTalentNode[];
   specNodes: RawTalentNode[];
   heroNodes: RawTalentNode[];
+  subTreeNodes: RawSubTreeNode[];
 }
 
 // --- Internal domain types ---
@@ -44,6 +62,7 @@ export interface TalentEntry {
 export interface TalentNode {
   id: number;
   name: string;
+  icon: string;
   type: "single" | "choice";
   maxRanks: number;
   entries: TalentEntry[];

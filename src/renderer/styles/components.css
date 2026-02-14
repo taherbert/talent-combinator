@@ -143,7 +143,6 @@
 
 /* Connector lines */
 .connector {
-  fill: none;
   stroke: var(--border-default);
   stroke-width: 2;
   transition: stroke var(--transition-normal);
@@ -151,6 +150,17 @@
 
 .connector.active {
   stroke: var(--text-secondary);
+}
+
+.connector.from-always {
+  stroke: var(--color-green);
+  stroke-width: 2.5;
+}
+
+.connector.from-never {
+  stroke: var(--node-locked);
+  stroke-dasharray: 4 3;
+  opacity: 0.5;
 }
 
 /* Tier gate */

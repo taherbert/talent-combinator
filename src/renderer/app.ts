@@ -20,6 +20,16 @@ void new ExportPanel(counterBar);
 let countWorkers: Worker[] = [];
 let countDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+function showEmptyState(): void {
+  mainContent.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "empty-state";
+  const p = document.createElement("p");
+  p.textContent = "Select a class and specialization to begin";
+  empty.appendChild(p);
+  mainContent.appendChild(empty);
+}
+
 function renderTrees(
   classTree: TalentTree,
   specTree: TalentTree,
@@ -27,14 +37,33 @@ function renderTrees(
 ): void {
   mainContent.innerHTML = "";
 
+  // Instructions bar
+  const instructions = document.createElement("div");
+  instructions.className = "instructions-bar";
+  instructions.innerHTML = [
+    "<strong>Controls:</strong>",
+    "Left-click to cycle: <em>Available</em> \u2192 <em class='c-green'>Always Include</em> \u2192 <em class='c-red'>Never Include</em> \u2192 <em>Available</em>",
+    "Right-click for conditional include (AND/OR conditions)",
+  ].join(" &middot; ");
+  mainContent.appendChild(instructions);
+
+  // Tree container — horizontal when space allows
+  const treeRow = document.createElement("div");
+  treeRow.className = "tree-row";
+
   const classContainer = document.createElement("div");
-  mainContent.appendChild(classContainer);
+  classContainer.className = "tree-column";
   new TalentTreeView(classContainer).render(classTree);
+  treeRow.appendChild(classContainer);
 
   const specContainer = document.createElement("div");
-  mainContent.appendChild(specContainer);
+  specContainer.className = "tree-column";
   new TalentTreeView(specContainer).render(specTree);
+  treeRow.appendChild(specContainer);
 
+  mainContent.appendChild(treeRow);
+
+  // Hero tree section
   if (heroTree) {
     const spec = state.activeSpec!;
     if (spec.heroTrees.length > 1) {
@@ -42,7 +71,7 @@ function renderTrees(
       selector.className = "hero-selector";
       for (const ht of spec.heroTrees) {
         const btn = document.createElement("button");
-        btn.textContent = ht.subTreeName || `Hero ${ht.subTreeId ?? ""}`;
+        btn.textContent = ht.subTreeName || `Hero Tree`;
         if (ht === heroTree) btn.classList.add("active");
         btn.addEventListener("click", () => state.selectHeroTree(ht));
         selector.appendChild(btn);
@@ -51,8 +80,8 @@ function renderTrees(
     }
 
     const heroContainer = document.createElement("div");
-    mainContent.appendChild(heroContainer);
     new TalentTreeView(heroContainer).render(heroTree);
+    mainContent.appendChild(heroContainer);
   }
 
   scheduleCount();
@@ -159,6 +188,7 @@ async function init(): Promise<void> {
   try {
     const data = await electronAPI.fetchTalentData();
     state.setSpecs(data.specs, data.version, data.cached);
+    showEmptyState();
   } catch (err) {
     mainContent.innerHTML = "";
     const errorDiv = document.createElement("div");
