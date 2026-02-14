@@ -28,6 +28,8 @@ export function checkConstraints(
     switch (constraint.type) {
       case "always":
         if (points === 0) return false;
+        if (constraint.exactRank != null && points !== constraint.exactRank)
+          return false;
         break;
       case "never":
         if (points > 0) return false;

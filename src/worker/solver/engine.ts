@@ -132,13 +132,21 @@ function traverse(
     }
 
     if (node.type === "choice") {
+      const constraint = solverState.constraints.get(node.id);
+
       if (!solverState.alwaysNodes.has(node.id)) {
         const bSkip = cloneBuild(build);
         bSkip.selected.set(node.id, 0);
         enumerateTier(tierIdx, nodeIdx + 1, tierNodes, bSkip);
       }
 
-      for (const entry of node.entries) {
+      // If entryIndex is specified, only enumerate that entry
+      const entriesToTry =
+        constraint?.entryIndex != null
+          ? [node.entries[constraint.entryIndex]].filter(Boolean)
+          : node.entries;
+
+      for (const entry of entriesToTry) {
         const b = cloneBuild(build);
         b.selected.set(node.id, entry.maxRanks);
         b.entries.set(entry.id, entry.maxRanks);
@@ -146,10 +154,19 @@ function traverse(
         enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b);
       }
     } else {
-      const minRank = solverState.alwaysNodes.has(node.id) ? 1 : 0;
+      const constraint = solverState.constraints.get(node.id);
       const entry = node.entries[0];
 
-      for (let rank = minRank; rank <= node.maxRanks; rank++) {
+      // If exactRank is specified, only use that rank
+      let minRank: number, maxRank: number;
+      if (constraint?.exactRank != null) {
+        minRank = maxRank = constraint.exactRank;
+      } else {
+        minRank = solverState.alwaysNodes.has(node.id) ? 1 : 0;
+        maxRank = node.maxRanks;
+      }
+
+      for (let rank = minRank; rank <= maxRank; rank++) {
         const b = cloneBuild(build);
         b.selected.set(node.id, rank);
         if (rank > 0 && entry) {

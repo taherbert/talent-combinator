@@ -14,7 +14,7 @@ export const COUNT_THRESHOLDS = {
 
 export const SOLVER_DEBOUNCE_MS = 200;
 
-export const NODE_SIZE = 48;
-export const NODE_GAP_X = 72;
-export const NODE_GAP_Y = 80;
-export const TREE_PADDING = 40;
+export const NODE_SIZE = 44;
+export const NODE_GAP_X = 50;
+export const NODE_GAP_Y = 72;
+export const TREE_PADDING = 20;

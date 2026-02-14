@@ -84,6 +84,10 @@ export class ClassPicker {
     const label = document.getElementById("spec-label");
     if (label) label.textContent = `${spec.className} - ${spec.specName}`;
 
+    // Close sidebar overlay
+    document.getElementById("sidebar")?.classList.remove("open");
+    document.getElementById("sidebar-backdrop")?.classList.remove("visible");
+
     state.selectSpec(spec);
   }
 }

@@ -18,21 +18,34 @@ function parseEntry(raw: RawTalentNode["entries"][number]): TalentEntry {
   };
 }
 
+function isValidNode(raw: RawTalentNode): boolean {
+  return Boolean(raw.name || raw.entries[0]?.id);
+}
+
 function nodeName(raw: RawTalentNode): string {
-  // Node name from data, fallback to first entry name
-  if (raw.name) return raw.name;
-  if (raw.entries.length > 0 && raw.entries[0].name) return raw.entries[0].name;
-  return `Node ${raw.id}`;
+  return raw.name || raw.entries[0]?.name || `Node ${raw.id}`;
+}
+
+function normalizeRows(nodes: Map<number, TalentNode>): void {
+  const uniqueRows = [...new Set([...nodes.values()].map((n) => n.row))].sort(
+    (a, b) => a - b,
+  );
+  const rowMap = new Map(uniqueRows.map((r, i) => [r, i]));
+  for (const node of nodes.values()) {
+    node.row = rowMap.get(node.row)!;
+  }
 }
 
 function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
   const nodes = new Map<number, TalentNode>();
 
   for (const raw of rawNodes) {
+    if (!isValidNode(raw)) continue;
+
     nodes.set(raw.id, {
       id: raw.id,
       name: nodeName(raw),
-      icon: raw.icon ?? raw.entries[0]?.icon ?? "",
+      icon: raw.icon || raw.entries[0]?.icon || "",
       type: raw.entries.length > 1 ? "choice" : "single",
       maxRanks: raw.maxRanks,
       entries: raw.entries.map(parseEntry),
@@ -47,8 +60,12 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
     });
   }
 
-  // Supplement reverse edges if not present in raw data
+  normalizeRows(nodes);
+
+  // Supplement reverse edges, filtering references to skipped nodes
   for (const node of nodes.values()) {
+    node.next = node.next.filter((id) => nodes.has(id));
+    node.prev = node.prev.filter((id) => nodes.has(id));
     for (const nextId of node.next) {
       const nextNode = nodes.get(nextId);
       if (nextNode && !nextNode.prev.includes(node.id)) {
@@ -61,7 +78,6 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
 }
 
 function computeGates(nodes: Map<number, TalentNode>): TierGate[] {
-  // Deduplicate by requiredPoints value (one gate per unique point threshold)
   const gatesByPoints = new Map<number, TierGate>();
   for (const node of nodes.values()) {
     if (node.reqPoints > 0) {
@@ -80,11 +96,7 @@ function computeGates(nodes: Map<number, TalentNode>): TierGate[] {
 }
 
 function computeMaxPoints(nodes: Map<number, TalentNode>): number {
-  let total = 0;
-  for (const node of nodes.values()) {
-    total += node.maxRanks;
-  }
-  return total;
+  return [...nodes.values()].reduce((sum, node) => sum + node.maxRanks, 0);
 }
 
 function buildTree(
@@ -105,19 +117,46 @@ function buildTree(
   };
 }
 
-export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
-  return rawData.map((raw) => {
-    // Build hero subtree name lookup from subTreeNodes
-    const heroNameMap = new Map<number, string>();
-    if (raw.subTreeNodes) {
-      for (const stNode of raw.subTreeNodes) {
-        for (const entry of stNode.entries) {
-          if (entry.traitSubTreeId && entry.name) {
-            heroNameMap.set(entry.traitSubTreeId, entry.name);
-          }
-        }
+function buildHeroNameMap(raw: RawSpecData): Map<number, string> {
+  const map = new Map<number, string>();
+  if (!raw.subTreeNodes) return map;
+
+  // Primary: extract from subTreeNodes entries
+  for (const stNode of raw.subTreeNodes) {
+    if (!stNode.entries) continue;
+    for (const entry of stNode.entries) {
+      if (entry.traitSubTreeId != null && entry.name) {
+        map.set(entry.traitSubTreeId, entry.name);
       }
     }
+  }
+
+  if (map.size > 0) return map;
+
+  // Fallback: parse "Name A / Name B" from a parent node name
+  for (const stNode of raw.subTreeNodes) {
+    if (!stNode.name?.includes(" / ")) continue;
+
+    const names = stNode.name.split(" / ");
+    const subTreeIds = [
+      ...new Set(
+        raw.heroNodes
+          .map((n) => n.subTreeId)
+          .filter((id): id is number => id != null),
+      ),
+    ].sort((a, b) => a - b);
+    for (let i = 0; i < Math.min(names.length, subTreeIds.length); i++) {
+      map.set(subTreeIds[i], names[i].trim());
+    }
+    break;
+  }
+
+  return map;
+}
+
+export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
+  return rawData.map((raw) => {
+    const heroNameMap = buildHeroNameMap(raw);
 
     // Group hero nodes by subTreeId
     const heroGroups = new Map<number, RawTalentNode[]>();

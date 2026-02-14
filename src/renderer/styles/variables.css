@@ -32,8 +32,8 @@
   --node-conditional: var(--color-amber);
 
   /* Sizes */
-  --node-size: 48px;
-  --sidebar-width: 280px;
+  --node-size: 44px;
+  --sidebar-width: 260px;
   --header-height: 48px;
   --counter-height: 56px;
 

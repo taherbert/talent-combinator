@@ -1,25 +1,29 @@
 import { state } from "../state";
+import { addDismissHandler } from "./dismiss";
 import type { TalentNode, TalentTree, BooleanExpr } from "../../shared/types";
+
+interface ConditionGroup {
+  talents: { nodeId: number; name: string }[];
+}
 
 export class ConditionEditor {
   private popover: HTMLElement | null = null;
   private currentNode: TalentNode | null = null;
   private currentTree: TalentTree | null = null;
-  private conditions: { nodeId: number; name: string }[] = [];
-  private operator: "AND" | "OR" = "AND";
+  private groups: ConditionGroup[] = [];
+  private topOp: "AND" | "OR" = "AND";
 
   open(node: TalentNode, tree: TalentTree, x: number, y: number): void {
     this.close();
     this.currentNode = node;
     this.currentTree = tree;
 
-    // Load existing condition
     const existing = state.constraints.get(node.id);
     if (existing?.type === "conditional" && existing.condition) {
       this.loadCondition(existing.condition);
     } else {
-      this.conditions = [];
-      this.operator = "AND";
+      this.groups = [];
+      this.topOp = "AND";
     }
 
     this.popover = document.createElement("div");
@@ -30,14 +34,7 @@ export class ConditionEditor {
     this.renderPopover();
     document.getElementById("dialog-container")!.appendChild(this.popover);
 
-    // Close on outside click
-    const closeHandler = (e: MouseEvent) => {
-      if (this.popover && !this.popover.contains(e.target as Node)) {
-        this.close();
-        document.removeEventListener("mousedown", closeHandler);
-      }
-    };
-    setTimeout(() => document.addEventListener("mousedown", closeHandler), 0);
+    addDismissHandler(this.popover, () => this.close());
   }
 
   close(): void {
@@ -48,40 +45,63 @@ export class ConditionEditor {
   }
 
   private loadCondition(expr: BooleanExpr): void {
-    this.conditions = [];
+    this.groups = [];
+
     if (expr.op === "AND" || expr.op === "OR") {
-      this.operator = expr.op;
+      this.topOp = expr.op;
       for (const child of expr.children) {
         if (child.op === "TALENT_SELECTED") {
-          const node = this.findNodeById(child.nodeId);
-          this.conditions.push({
-            nodeId: child.nodeId,
-            name: node?.name ?? `Node ${child.nodeId}`,
+          // Single talent as its own group
+          this.groups.push({
+            talents: [
+              {
+                nodeId: child.nodeId,
+                name: this.findNodeName(child.nodeId),
+              },
+            ],
           });
+        } else if (child.op === "AND" || child.op === "OR") {
+          // Sub-group of talents
+          const talents = child.children
+            .filter(
+              (c): c is BooleanExpr & { op: "TALENT_SELECTED" } =>
+                c.op === "TALENT_SELECTED",
+            )
+            .map((c) => ({
+              nodeId: c.nodeId,
+              name: this.findNodeName(c.nodeId),
+            }));
+          if (talents.length > 0) {
+            this.groups.push({ talents });
+          }
         }
       }
     } else if (expr.op === "TALENT_SELECTED") {
-      this.conditions.push({
-        nodeId: expr.nodeId,
-        name: this.findNodeById(expr.nodeId)?.name ?? `Node ${expr.nodeId}`,
+      this.topOp = "AND";
+      this.groups.push({
+        talents: [
+          { nodeId: expr.nodeId, name: this.findNodeName(expr.nodeId) },
+        ],
       });
     }
   }
 
-  private findNodeById(nodeId: number): TalentNode | undefined {
-    // Search all active trees
+  private findNodeName(nodeId: number): string {
     const spec = state.activeSpec;
-    if (!spec) return undefined;
-    return (
+    if (!spec) return `Node ${nodeId}`;
+    const node =
       spec.classTree.nodes.get(nodeId) ??
       spec.specTree.nodes.get(nodeId) ??
-      state.activeHeroTree?.nodes.get(nodeId)
-    );
+      state.activeHeroTree?.nodes.get(nodeId);
+    return node?.name ?? `Node ${nodeId}`;
+  }
+
+  private get innerOp(): "AND" | "OR" {
+    return this.topOp === "AND" ? "OR" : "AND";
   }
 
   private renderPopover(): void {
     if (!this.popover || !this.currentNode) return;
-
     this.popover.innerHTML = "";
 
     // Header
@@ -96,86 +116,114 @@ export class ConditionEditor {
     const body = document.createElement("div");
     body.className = "condition-popover-body";
 
-    // Operator toggle (shown when 2+ conditions exist)
-    if (this.conditions.length > 1) {
-      const row = document.createElement("div");
-      row.className = "condition-row";
+    // Top operator toggle
+    if (this.groups.length > 1) {
+      const opRow = document.createElement("div");
+      opRow.className = "condition-row";
 
       const toggle = document.createElement("button");
-      toggle.className = `condition-op-toggle ${this.operator.toLowerCase()}`;
-      toggle.textContent = this.operator;
-      toggle.title = "Click to toggle between AND / OR";
+      toggle.className = `condition-op-toggle ${this.topOp.toLowerCase()}`;
+      toggle.textContent = this.topOp;
+      toggle.title = "Toggle between AND / OR";
       toggle.addEventListener("click", () => {
-        this.operator = this.operator === "AND" ? "OR" : "AND";
+        this.topOp = this.topOp === "AND" ? "OR" : "AND";
         this.renderPopover();
       });
-      row.appendChild(toggle);
+      opRow.appendChild(toggle);
 
       const label = document.createElement("span");
-      label.style.cssText = "font-size: 12px; color: var(--text-secondary)";
+      label.className = "condition-op-label";
       label.textContent =
-        this.operator === "AND"
-          ? "All of these talents must be selected"
-          : "At least one of these talents must be selected";
-      row.appendChild(label);
+        this.topOp === "AND"
+          ? "All conditions must be met"
+          : "Any condition must be met";
+      opRow.appendChild(label);
 
-      body.appendChild(row);
-    } else if (this.conditions.length === 0) {
+      body.appendChild(opRow);
+    }
+
+    if (this.groups.length === 0) {
       const hint = document.createElement("div");
-      hint.style.cssText =
-        "font-size: 12px; color: var(--text-muted); padding: 4px 0;";
+      hint.className = "condition-hint";
       hint.textContent =
-        "Add talents below. Use AND (all required) or OR (any required) to combine them.";
+        "Add talents below. Group them with OR/AND to create complex conditions.";
       body.appendChild(hint);
     }
 
-    // Condition chips
-    for (const cond of this.conditions) {
-      const chip = document.createElement("div");
-      chip.className = "condition-talent-chip";
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = cond.name;
-      const removeSpan = document.createElement("span");
-      removeSpan.className = "remove";
-      removeSpan.textContent = "\u00d7";
-      chip.append(nameSpan, removeSpan);
-      removeSpan.addEventListener("click", () => {
-        this.conditions = this.conditions.filter(
-          (c) => c.nodeId !== cond.nodeId,
-        );
-        this.renderPopover();
-      });
-      body.appendChild(chip);
-    }
+    // Render each group
+    for (let gi = 0; gi < this.groups.length; gi++) {
+      if (gi > 0) {
+        const sep = document.createElement("div");
+        sep.className = "condition-separator";
+        sep.textContent = this.topOp;
+        body.appendChild(sep);
+      }
 
-    // Add talent selector
-    if (this.currentTree) {
-      const hint = document.createElement("div");
-      hint.className = "condition-add-hint";
-      hint.textContent = "Click a talent below to add it as a condition:";
-      body.appendChild(hint);
+      const group = this.groups[gi];
+      const groupEl = document.createElement("div");
+      groupEl.className = "condition-group";
 
-      const talentList = document.createElement("div");
-      talentList.style.cssText =
-        "max-height: 150px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px;";
+      for (let ti = 0; ti < group.talents.length; ti++) {
+        const talent = group.talents[ti];
 
-      // Show all available talents from the same tree (excluding self)
-      for (const node of this.currentTree.nodes.values()) {
-        if (node.id === this.currentNode!.id) continue;
-        if (this.conditions.some((c) => c.nodeId === node.id)) continue;
+        if (ti > 0) {
+          const innerSep = document.createElement("span");
+          innerSep.className = "condition-inner-op";
+          innerSep.textContent = this.innerOp;
+          groupEl.appendChild(innerSep);
+        }
 
-        const btn = document.createElement("button");
-        btn.className = "condition-talent-chip";
-        btn.textContent = node.name;
-        btn.addEventListener("click", () => {
-          this.conditions.push({ nodeId: node.id, name: node.name });
+        const chip = document.createElement("span");
+        chip.className = "condition-talent-chip";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = talent.name;
+        const removeSpan = document.createElement("span");
+        removeSpan.className = "remove";
+        removeSpan.textContent = "\u00d7";
+        chip.append(nameSpan, removeSpan);
+        removeSpan.addEventListener("click", () => {
+          group.talents.splice(ti, 1);
+          if (group.talents.length === 0) {
+            this.groups.splice(gi, 1);
+          }
           this.renderPopover();
         });
-        talentList.appendChild(btn);
+        groupEl.appendChild(chip);
       }
-      body.appendChild(talentList);
+
+      // "Add OR/AND alternative" button within group
+      if (group.talents.length > 0) {
+        const addAltBtn = document.createElement("button");
+        addAltBtn.className = "condition-add-alt";
+        addAltBtn.textContent = `+ ${this.innerOp}`;
+        addAltBtn.title = `Add ${this.innerOp} alternative to this group`;
+        addAltBtn.addEventListener("click", () => {
+          this.showTalentPicker(body, (nodeId, name) => {
+            group.talents.push({ nodeId, name });
+            this.renderPopover();
+          });
+        });
+        groupEl.appendChild(addAltBtn);
+      }
+
+      body.appendChild(groupEl);
     }
 
+    // Add new condition group
+    const addSection = document.createElement("div");
+    addSection.className = "condition-add-section";
+
+    const addHint = document.createElement("div");
+    addHint.className = "condition-hint";
+    addHint.textContent = "Click a talent to add a new condition:";
+    addSection.appendChild(addHint);
+
+    this.showTalentPicker(addSection, (nodeId, name) => {
+      this.groups.push({ talents: [{ nodeId, name }] });
+      this.renderPopover();
+    });
+
+    body.appendChild(addSection);
     this.popover.appendChild(body);
 
     // Footer
@@ -203,16 +251,55 @@ export class ConditionEditor {
     this.popover.appendChild(footer);
   }
 
-  private save(): void {
-    if (!this.currentNode || this.conditions.length === 0) return;
+  private showTalentPicker(
+    container: HTMLElement,
+    onSelect: (nodeId: number, name: string) => void,
+  ): void {
+    if (!this.currentTree) return;
 
-    const children: BooleanExpr[] = this.conditions.map((c) => ({
-      op: "TALENT_SELECTED" as const,
-      nodeId: c.nodeId,
-    }));
+    const allTalentIds = new Set(
+      this.groups.flatMap((g) => g.talents.map((t) => t.nodeId)),
+    );
+
+    const talentList = document.createElement("div");
+    talentList.className = "condition-talent-list";
+
+    for (const node of this.currentTree.nodes.values()) {
+      if (node.id === this.currentNode!.id) continue;
+      if (allTalentIds.has(node.id)) continue;
+
+      const btn = document.createElement("button");
+      btn.className = "condition-talent-chip";
+      btn.textContent = node.name;
+      btn.addEventListener("click", () => onSelect(node.id, node.name));
+      talentList.appendChild(btn);
+    }
+    container.appendChild(talentList);
+  }
+
+  private save(): void {
+    if (!this.currentNode || this.groups.length === 0) return;
+
+    const groupExprs: BooleanExpr[] = this.groups.map((group) => {
+      if (group.talents.length === 1) {
+        return {
+          op: "TALENT_SELECTED" as const,
+          nodeId: group.talents[0].nodeId,
+        };
+      }
+      return {
+        op: this.innerOp,
+        children: group.talents.map((t) => ({
+          op: "TALENT_SELECTED" as const,
+          nodeId: t.nodeId,
+        })),
+      };
+    });
 
     const condition: BooleanExpr =
-      children.length === 1 ? children[0] : { op: this.operator, children };
+      groupExprs.length === 1
+        ? groupExprs[0]
+        : { op: this.topOp, children: groupExprs };
 
     state.setConstraint({
       nodeId: this.currentNode.id,

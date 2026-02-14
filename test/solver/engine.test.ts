@@ -150,4 +150,34 @@ describe("generateBuilds", () => {
       expect(hasNode1).toBe(true);
     }
   });
+
+  it("respects entryIndex on choice nodes", () => {
+    const tree = makeTree([
+      makeNode(1, {
+        type: "choice",
+        entries: [makeEntry(100), makeEntry(101)],
+      }),
+    ]);
+    // Always with entryIndex=0 → only entry 100
+    const constraints = new Map<number, Constraint>([
+      [1, { nodeId: 1, type: "always", entryIndex: 0 }],
+    ]);
+    const result = generateBuilds(tree, constraints);
+    expect(result.count).toBe(1);
+    expect(result.builds![0].entries.has(100)).toBe(true);
+    expect(result.builds![0].entries.has(101)).toBe(false);
+  });
+
+  it("respects exactRank on multi-rank nodes", () => {
+    const tree = makeTree([
+      makeNode(1, { maxRanks: 3, entries: [makeEntry(100, 3)] }),
+    ]);
+    // Always with exactRank=2
+    const constraints = new Map<number, Constraint>([
+      [1, { nodeId: 1, type: "always", exactRank: 2 }],
+    ]);
+    const result = generateBuilds(tree, constraints);
+    expect(result.count).toBe(1);
+    expect(result.builds![0].entries.get(100)).toBe(2);
+  });
 });

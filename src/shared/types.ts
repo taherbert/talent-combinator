@@ -111,6 +111,8 @@ export type ConstraintType = "always" | "never" | "conditional";
 export interface Constraint {
   nodeId: number;
   type: ConstraintType;
+  entryIndex?: number; // For choice nodes: which entry (0 or 1)
+  exactRank?: number; // For multi-rank: specific rank desired
   condition?: BooleanExpr;
 }
 

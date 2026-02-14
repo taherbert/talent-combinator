@@ -1,7 +1,13 @@
 import { state } from "../state";
 import { TalentNodeView } from "./talent-node";
 import { ConditionEditor } from "./condition-editor";
-import type { TalentTree, TalentNode, NodeState } from "../../shared/types";
+import { addDismissHandler } from "./dismiss";
+import type {
+  TalentTree,
+  TalentNode,
+  NodeState,
+  Constraint,
+} from "../../shared/types";
 import {
   NODE_SIZE,
   NODE_GAP_X,
@@ -18,6 +24,7 @@ export class TalentTreeView {
   private tree: TalentTree | null = null;
   private conditionEditor: ConditionEditor;
   private tooltipEl: HTMLElement;
+  private nodePopover: HTMLElement | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -44,15 +51,12 @@ export class TalentTreeView {
     const section = document.createElement("div");
     section.className = "tree-section";
 
-    // Header with tree name
+    // Header — just the tree name
     const header = document.createElement("div");
     header.className = "tree-section-header";
-    const title = tree.subTreeName ?? `${tree.type} talents`;
     const titleSpan = document.createElement("span");
-    titleSpan.textContent = title;
-    const countSpan = document.createElement("span");
-    countSpan.textContent = `${tree.totalNodes} nodes · ${tree.maxPoints} points`;
-    header.append(titleSpan, countSpan);
+    titleSpan.textContent = tree.subTreeName ?? `${tree.type} talents`;
+    header.appendChild(titleSpan);
     section.appendChild(header);
 
     const svgContainer = document.createElement("div");
@@ -79,7 +83,7 @@ export class TalentTreeView {
     svg.setAttribute("height", String(height));
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-    // Tier gates (behind everything)
+    // Tier gates (visual separators only)
     const gateGroup = document.createElementNS(SVG_NS, "g");
     for (const gate of tree.gates) {
       const y =
@@ -88,29 +92,18 @@ export class TalentTreeView {
         NODE_GAP_Y / 2 +
         NODE_SIZE / 2;
 
-      // Skip gates at or above the first row (no gate needed before top talents)
       if (gate.row <= minRow) continue;
 
-      const g = document.createElementNS(SVG_NS, "g");
-      g.classList.add("tier-gate");
-
       const line = document.createElementNS(SVG_NS, "line");
+      line.classList.add("tier-gate-line");
       line.setAttribute("x1", "0");
       line.setAttribute("y1", String(y));
       line.setAttribute("x2", String(width));
       line.setAttribute("y2", String(y));
-      g.appendChild(line);
-
-      const text = document.createElementNS(SVG_NS, "text");
-      text.setAttribute("x", String(width / 2));
-      text.setAttribute("y", String(y - 4));
-      text.textContent = `${gate.requiredPoints} points required`;
-      g.appendChild(text);
-
-      gateGroup.appendChild(g);
+      gateGroup.appendChild(line);
     }
 
-    // Connectors (straight lines)
+    // Connectors
     const connectorGroup = document.createElementNS(SVG_NS, "g");
     connectorGroup.classList.add("connectors");
 
@@ -135,7 +128,7 @@ export class TalentTreeView {
       nodeGroup.appendChild(view.group);
     }
 
-    // Draw straight connector lines
+    // Draw connector lines
     for (const node of tree.nodes.values()) {
       const fromView = this.nodeViews.get(node.id);
       if (!fromView) continue;
@@ -168,16 +161,123 @@ export class TalentTreeView {
     this.updateConnectors();
   }
 
-  private handleClick(node: TalentNode, _event: MouseEvent): void {
-    const currentType = state.constraints.get(node.id)?.type;
+  private handleClick(node: TalentNode, event: MouseEvent): void {
+    // Choice nodes or multi-rank nodes get a popover
+    if (node.type === "choice" || node.maxRanks > 1) {
+      this.showNodePopover(node, event.clientX, event.clientY);
+      return;
+    }
 
-    // Cycle: unset -> always -> never -> unset
+    // Single-rank non-choice: simple cycle
+    const currentType = state.constraints.get(node.id)?.type;
     if (!currentType) {
       state.setConstraint({ nodeId: node.id, type: "always" });
     } else if (currentType === "always") {
       state.setConstraint({ nodeId: node.id, type: "never" });
     } else {
       state.removeConstraint(node.id);
+    }
+  }
+
+  private showNodePopover(node: TalentNode, x: number, y: number): void {
+    this.closeNodePopover();
+
+    const popover = document.createElement("div");
+    popover.className = "node-popover";
+    popover.style.left = `${x}px`;
+    popover.style.top = `${y}px`;
+
+    const title = document.createElement("div");
+    title.className = "node-popover-title";
+    title.textContent = node.name;
+    popover.appendChild(title);
+
+    const current = state.constraints.get(node.id);
+
+    const addBtn = (
+      label: string,
+      activeClass: string | null,
+      onClick: () => void,
+      extraClass?: string,
+    ): void => {
+      const btn = document.createElement("button");
+      btn.className = `node-popover-btn${extraClass ? ` ${extraClass}` : ""}`;
+      if (activeClass) btn.classList.add(activeClass);
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        onClick();
+        this.closeNodePopover();
+      });
+      popover.appendChild(btn);
+    };
+
+    if (node.type === "choice") {
+      for (let i = 0; i < node.entries.length; i++) {
+        const entry = node.entries[i];
+        const active =
+          current?.type === "always" && current.entryIndex === i
+            ? "active-always"
+            : null;
+        addBtn(`Always: ${entry.name || `Choice ${i + 1}`}`, active, () =>
+          state.setConstraint({
+            nodeId: node.id,
+            type: "always",
+            entryIndex: i,
+          }),
+        );
+      }
+
+      const eitherActive =
+        current?.type === "always" && current.entryIndex == null
+          ? "active-always"
+          : null;
+      addBtn("Always: Either choice", eitherActive, () =>
+        state.setConstraint({ nodeId: node.id, type: "always" }),
+      );
+    }
+
+    if (node.maxRanks > 1 && node.type !== "choice") {
+      for (let r = 1; r <= node.maxRanks; r++) {
+        const active =
+          current?.type === "always" && current.exactRank === r
+            ? "active-always"
+            : null;
+        addBtn(`Always at ${r}/${node.maxRanks}`, active, () =>
+          state.setConstraint({
+            nodeId: node.id,
+            type: "always",
+            exactRank: r,
+          }),
+        );
+      }
+
+      const anyActive =
+        current?.type === "always" && current.exactRank == null
+          ? "active-always"
+          : null;
+      addBtn("Always (any rank)", anyActive, () =>
+        state.setConstraint({ nodeId: node.id, type: "always" }),
+      );
+    }
+
+    addBtn("Never", current?.type === "never" ? "active-never" : null, () =>
+      state.setConstraint({ nodeId: node.id, type: "never" }),
+    );
+
+    if (current) {
+      addBtn("Clear", null, () => state.removeConstraint(node.id), "clear");
+    }
+
+    document.getElementById("dialog-container")!.appendChild(popover);
+    this.nodePopover = popover;
+
+    addDismissHandler(popover, () => this.closeNodePopover());
+  }
+
+  private closeNodePopover(): void {
+    if (this.nodePopover) {
+      this.nodePopover.remove();
+      this.nodePopover = null;
     }
   }
 
@@ -207,29 +307,24 @@ export class TalentTreeView {
     if (node.type === "choice" && node.entries.length > 1) {
       for (const entry of node.entries) {
         const entryDiv = document.createElement("div");
-        entryDiv.className = "tooltip-rank";
+        entryDiv.className = "tooltip-detail";
         entryDiv.textContent = `Choice: ${entry.name || `Entry ${entry.id}`}`;
         tooltip.appendChild(entryDiv);
       }
     }
 
-    const rank = document.createElement("div");
-    rank.className = "tooltip-rank";
-    rank.textContent = `Max ranks: ${node.maxRanks}`;
-    tooltip.appendChild(rank);
-
-    if (node.reqPoints > 0) {
-      const req = document.createElement("div");
-      req.className = "tooltip-rank";
-      req.textContent = `Requires: ${node.reqPoints} points in tree`;
-      tooltip.appendChild(req);
+    if (node.maxRanks > 1) {
+      const rank = document.createElement("div");
+      rank.className = "tooltip-detail";
+      rank.textContent = `Max ranks: ${node.maxRanks}`;
+      tooltip.appendChild(rank);
     }
 
     const constraint = state.constraints.get(node.id);
     if (constraint) {
       const statusDiv = document.createElement("div");
-      statusDiv.className = "tooltip-rank";
-      statusDiv.textContent = `Status: ${constraint.type}`;
+      statusDiv.className = "tooltip-status";
+      statusDiv.textContent = this.constraintLabel(constraint, node);
       tooltip.appendChild(statusDiv);
     }
 
@@ -240,13 +335,27 @@ export class TalentTreeView {
     this.tooltipEl.appendChild(tooltip);
   }
 
+  private constraintLabel(constraint: Constraint, node: TalentNode): string {
+    if (constraint.type !== "always") return constraint.type;
+    if (constraint.entryIndex != null) {
+      const entryName =
+        node.entries[constraint.entryIndex]?.name ||
+        `Choice ${constraint.entryIndex + 1}`;
+      return `always: ${entryName}`;
+    }
+    if (constraint.exactRank != null) {
+      return `always at ${constraint.exactRank}/${node.maxRanks}`;
+    }
+    return "always";
+  }
+
   private updateNodeStates(): void {
     if (!this.tree) return;
 
     for (const [nodeId, view] of this.nodeViews) {
-      const nodeState: NodeState =
-        state.constraints.get(nodeId)?.type ?? "available";
-      view.setState(nodeState);
+      const constraint = state.constraints.get(nodeId);
+      const nodeState: NodeState = constraint?.type ?? "available";
+      view.setState(nodeState, constraint);
     }
   }
 
@@ -255,17 +364,22 @@ export class TalentTreeView {
 
     for (const [key, line] of this.connectors) {
       const [fromIdStr, toIdStr] = key.split("-");
-      const fromState = state.constraints.get(Number(fromIdStr))?.type;
-      const toState = state.constraints.get(Number(toIdStr))?.type;
+      const fromConstraint = state.constraints.get(Number(fromIdStr));
+      const toConstraint = state.constraints.get(Number(toIdStr));
 
-      line.classList.remove("active", "from-always", "from-never");
+      line.classList.remove("active", "possible", "impossible");
 
-      // Highlight connector when source node is selected (always)
-      if (fromState === "always") {
-        line.classList.add("active", "from-always");
-      } else if (fromState === "never") {
-        line.classList.add("from-never");
-      } else if (fromState || toState) {
+      const fromNever = fromConstraint?.type === "never";
+      const toNever = toConstraint?.type === "never";
+      const fromAlways = fromConstraint?.type === "always";
+
+      if (fromNever || toNever) {
+        // Either end excluded — path is impossible
+        line.classList.add("impossible");
+      } else if (fromAlways) {
+        // Source included — path is possible
+        line.classList.add("possible");
+      } else if (fromConstraint || toConstraint) {
         line.classList.add("active");
       }
     }
