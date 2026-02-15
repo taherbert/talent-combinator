@@ -11,6 +11,11 @@ export class TalentNodeView {
   private conditionBadge: SVGTextElement;
   private rankBadge: SVGGElement | null = null;
   private rankText: SVGTextElement | null = null;
+  private iconEl: SVGImageElement | null = null;
+  private iconUrls = new Map<number, string>();
+  private readonly clipId: string;
+  private readonly iconOffset: number;
+  private readonly iconSize: number;
 
   constructor(
     readonly node: TalentNode,
@@ -24,53 +29,49 @@ export class TalentNodeView {
       entering: boolean,
     ) => void,
   ) {
+    this.clipId = `clip-${node.id}`;
+    this.iconOffset = -NODE_SIZE / 2 + ICON_INSET;
+    this.iconSize = NODE_SIZE - ICON_INSET * 2;
+
     this.group = document.createElementNS(SVG_NS, "g");
     this.group.classList.add("talent-node");
     this.group.setAttribute("transform", `translate(${x}, ${y})`);
 
-    const bgShape =
-      node.type === "choice" ? this.createOctagon() : this.createRoundedRect();
+    // Background shape — octagon for real choice nodes, rounded rect for everything else
+    const isVisualChoice = node.type === "choice" && !node.isApex;
+    const bgShape = isVisualChoice
+      ? this.createOctagon()
+      : this.createRoundedRect();
     bgShape.classList.add("node-bg");
     this.group.appendChild(bgShape);
 
-    // Talent icon
-    const iconName = node.icon || node.entries[0]?.icon;
-    if (iconName) {
-      const clipId = `clip-${node.id}`;
-      const defs = document.createElementNS(SVG_NS, "defs");
-      const clipPath = document.createElementNS(SVG_NS, "clipPath");
-      clipPath.setAttribute("id", clipId);
-      const iconOffset = -NODE_SIZE / 2 + ICON_INSET;
-      const iconSize = NODE_SIZE - ICON_INSET * 2;
+    // Placeholder icon
+    this.addPlaceholderIcon();
 
-      const clipRect = document.createElementNS(SVG_NS, "rect");
-      clipRect.setAttribute("x", String(iconOffset));
-      clipRect.setAttribute("y", String(iconOffset));
-      clipRect.setAttribute("width", String(iconSize));
-      clipRect.setAttribute("height", String(iconSize));
-      clipRect.setAttribute("rx", "5");
-      clipPath.appendChild(clipRect);
-      defs.appendChild(clipPath);
-      this.group.appendChild(defs);
+    // Clip path for icon
+    const defs = document.createElementNS(SVG_NS, "defs");
+    const clipPath = document.createElementNS(SVG_NS, "clipPath");
+    clipPath.setAttribute("id", this.clipId);
+    const clipRect = document.createElementNS(SVG_NS, "rect");
+    clipRect.setAttribute("x", String(this.iconOffset));
+    clipRect.setAttribute("y", String(this.iconOffset));
+    clipRect.setAttribute("width", String(this.iconSize));
+    clipRect.setAttribute("height", String(this.iconSize));
+    clipRect.setAttribute("rx", "5");
+    clipPath.appendChild(clipRect);
+    defs.appendChild(clipPath);
+    this.group.appendChild(defs);
 
-      const img = document.createElementNS(SVG_NS, "image");
-      img.setAttributeNS(XLINK_NS, "href", `${ICON_CDN_URL}/${iconName}.jpg`);
-      img.setAttribute("x", String(iconOffset));
-      img.setAttribute("y", String(iconOffset));
-      img.setAttribute("width", String(iconSize));
-      img.setAttribute("height", String(iconSize));
-      img.setAttribute("clip-path", `url(#${clipId})`);
-      img.classList.add("node-icon");
-      img.addEventListener("error", () => {
-        img.remove();
-        this.addPlaceholderIcon();
-      });
-      this.group.appendChild(img);
-    } else {
-      this.addPlaceholderIcon();
-    }
+    // Condition badge ("?") — created before rank badge so badge paints on top
+    this.conditionBadge = document.createElementNS(SVG_NS, "text");
+    this.conditionBadge.classList.add("condition-badge");
+    this.conditionBadge.setAttribute("x", "0");
+    this.conditionBadge.setAttribute("y", String(-NODE_SIZE / 2 - 4));
+    this.conditionBadge.textContent = "?";
+    this.conditionBadge.style.display = "none";
+    this.group.appendChild(this.conditionBadge);
 
-    // Multi-rank badge (prominent pill)
+    // Multi-rank badge — top-right, appended last so it paints on top of icon
     if (node.maxRanks > 1) {
       this.rankBadge = document.createElementNS(SVG_NS, "g");
       this.rankBadge.classList.add("rank-badge-group");
@@ -78,7 +79,7 @@ export class TalentNodeView {
       const pillW = 24;
       const pillH = 14;
       const pillX = NODE_SIZE / 2 - pillW + 4;
-      const pillY = NODE_SIZE / 2 - pillH + 2;
+      const pillY = -NODE_SIZE / 2 + 2;
 
       const bg = document.createElementNS(SVG_NS, "rect");
       bg.setAttribute("x", String(pillX));
@@ -99,14 +100,40 @@ export class TalentNodeView {
       this.group.appendChild(this.rankBadge);
     }
 
-    // Condition badge ("?")
-    this.conditionBadge = document.createElementNS(SVG_NS, "text");
-    this.conditionBadge.classList.add("condition-badge");
-    this.conditionBadge.setAttribute("x", "0");
-    this.conditionBadge.setAttribute("y", String(-NODE_SIZE / 2 - 4));
-    this.conditionBadge.textContent = "?";
-    this.conditionBadge.style.display = "none";
-    this.group.appendChild(this.conditionBadge);
+    // Choice indicator — top-left pill matching rank badge style
+    if (node.type === "choice" && !node.isApex) {
+      this.group.classList.add("choice-node");
+      const badge = document.createElementNS(SVG_NS, "g");
+      badge.classList.add("choice-badge");
+
+      const pillW = 24;
+      const pillH = 14;
+      const pillX = -(NODE_SIZE / 2) - 4;
+      const pillY = -NODE_SIZE / 2 + 2;
+
+      const bg = document.createElementNS(SVG_NS, "rect");
+      bg.setAttribute("x", String(pillX));
+      bg.setAttribute("y", String(pillY));
+      bg.setAttribute("width", String(pillW));
+      bg.setAttribute("height", String(pillH));
+      bg.setAttribute("rx", "4");
+      bg.classList.add("choice-pill-bg");
+      badge.appendChild(bg);
+
+      const cx = pillX + pillW / 2;
+      const cy = pillY + pillH / 2;
+      const arrow = document.createElementNS(SVG_NS, "path");
+      arrow.setAttribute(
+        "d",
+        `M ${cx - 7},${cy} L ${cx + 7},${cy}` +
+          ` M ${cx + 4},${cy - 3} L ${cx + 7},${cy} L ${cx + 4},${cy + 3}` +
+          ` M ${cx - 4},${cy - 3} L ${cx - 7},${cy} L ${cx - 4},${cy + 3}`,
+      );
+      arrow.classList.add("choice-pill-arrow");
+      badge.appendChild(arrow);
+
+      this.group.appendChild(badge);
+    }
 
     // Name label below node
     const displayName = node.name || "Unknown";
@@ -119,6 +146,9 @@ export class TalentNodeView {
         ? displayName.slice(0, 11) + "\u2026"
         : displayName;
     this.group.appendChild(nameText);
+
+    // Preload icons
+    this.preloadIcons();
 
     // Events
     this.group.addEventListener("click", (e) => this.onClick(node, e));
@@ -134,6 +164,54 @@ export class TalentNodeView {
     );
   }
 
+  private preloadIcons(): void {
+    const { node } = this;
+
+    // Default icon (node-level or first entry)
+    const defaultIconName = node.icon || node.entries[0]?.icon;
+    if (defaultIconName) {
+      this.probeIcon(defaultIconName, -1);
+    }
+
+    // Per-entry icons for choice nodes
+    if (node.type === "choice") {
+      for (let i = 0; i < node.entries.length; i++) {
+        const entryIcon = node.entries[i].icon;
+        if (entryIcon) {
+          this.probeIcon(entryIcon, i);
+        }
+      }
+    }
+  }
+
+  private probeIcon(iconName: string, entryIndex: number): void {
+    const normalized = iconName.toLowerCase().replace(/ /g, "_");
+    const url = `${ICON_CDN_URL}/${normalized}.jpg`;
+    const probe = new Image();
+    probe.onload = () => {
+      this.iconUrls.set(entryIndex, url);
+      // Show default icon on first successful load
+      if (!this.iconEl && (entryIndex === -1 || !this.iconUrls.has(-1))) {
+        this.showIcon(url);
+      }
+    };
+    probe.src = url;
+  }
+
+  private showIcon(url: string): void {
+    const svgImg = document.createElementNS(SVG_NS, "image");
+    svgImg.setAttributeNS(XLINK_NS, "href", url);
+    svgImg.setAttribute("x", String(this.iconOffset));
+    svgImg.setAttribute("y", String(this.iconOffset));
+    svgImg.setAttribute("width", String(this.iconSize));
+    svgImg.setAttribute("height", String(this.iconSize));
+    svgImg.setAttribute("clip-path", `url(#${this.clipId})`);
+    svgImg.classList.add("node-icon");
+    // Insert before conditionBadge — rank badge is after, so it paints on top
+    this.group.insertBefore(svgImg, this.conditionBadge);
+    this.iconEl = svgImg;
+  }
+
   private addPlaceholderIcon(): void {
     const offset = -NODE_SIZE / 2 + PLACEHOLDER_INSET;
     const size = NODE_SIZE - PLACEHOLDER_INSET * 2;
@@ -146,7 +224,7 @@ export class TalentNodeView {
     iconBg.setAttribute("rx", "4");
     iconBg.setAttribute("fill", "var(--bg-primary)");
     iconBg.classList.add("node-icon");
-    this.group.insertBefore(iconBg, this.conditionBadge);
+    this.group.appendChild(iconBg);
   }
 
   private createRoundedRect(): SVGRectElement {
@@ -184,6 +262,7 @@ export class TalentNodeView {
       "always",
       "never",
       "conditional",
+      "implied",
     );
     this.group.classList.add(nodeState);
     this.conditionBadge.style.display =
@@ -195,6 +274,19 @@ export class TalentNodeView {
         this.rankText.textContent = `${constraint.exactRank}/${this.node.maxRanks}`;
       } else {
         this.rankText.textContent = `${this.node.maxRanks}`;
+      }
+    }
+
+    // Swap icon for choice nodes when entryIndex changes
+    if (this.iconEl && constraint?.entryIndex != null) {
+      const entryUrl = this.iconUrls.get(constraint.entryIndex);
+      if (entryUrl) {
+        this.iconEl.setAttributeNS(XLINK_NS, "href", entryUrl);
+      }
+    } else if (this.iconEl && constraint?.entryIndex == null) {
+      const defaultUrl = this.iconUrls.get(-1);
+      if (defaultUrl) {
+        this.iconEl.setAttributeNS(XLINK_NS, "href", defaultUrl);
       }
     }
   }

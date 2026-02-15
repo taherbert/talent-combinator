@@ -3,11 +3,20 @@ import { ClassPicker } from "./ui/class-picker";
 import { TalentTreeView } from "./ui/talent-tree";
 import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
-import type { Specialization, TalentTree, TreeCounts } from "../shared/types";
+import type {
+  Specialization,
+  TalentNode,
+  TalentTree,
+  TreeCountDetail,
+  Loadout,
+} from "../shared/types";
 import { SOLVER_DEBOUNCE_MS } from "../shared/constants";
+import { validateTree } from "../shared/validation";
+import { countBuildsFast } from "../worker/solver/engine";
 
 declare const electronAPI: import("../shared/types").ElectronAPI;
 
+const headerEl = document.querySelector(".header")!;
 const sidebar = document.getElementById("sidebar")!;
 const sidebarToggle = document.getElementById("sidebar-toggle")!;
 const sidebarBackdrop = document.getElementById("sidebar-backdrop")!;
@@ -19,8 +28,14 @@ void new ClassPicker(sidebar);
 void new CombinationCounter(counterBar);
 void new ExportPanel(counterBar);
 
-let countWorkers: Worker[] = [];
 let countDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+type CountKey = "classCount" | "specCount" | "heroCount";
+const cachedDetails: Record<CountKey, TreeCountDetail> = {
+  classCount: { count: 1n, durationMs: 0 },
+  specCount: { count: 1n, durationMs: 0 },
+  heroCount: { count: 1n, durationMs: 0 },
+};
+const dirtyTrees = new Set<CountKey>();
 
 // --- Sidebar toggle ---
 
@@ -100,6 +115,8 @@ function showSplash(specs: Specialization[]): void {
 
 // --- Tree rendering ---
 
+let activeTreeTab = "class";
+
 function renderTrees(
   classTree: TalentTree,
   specTree: TalentTree,
@@ -115,147 +132,370 @@ function renderTrees(
   instructions.className = "instructions-bar";
   instructions.innerHTML = [
     "<strong>Controls:</strong>",
-    "Left-click to cycle: <em>Available</em> \u2192 <em class='c-green'>Always</em> \u2192 <em class='c-red'>Never</em> \u2192 <em>Available</em>",
-    "Right-click for conditional (AND/OR)",
+    "Click to cycle: <em class='c-green'>always</em> &rarr; <em class='c-red'>never</em> &rarr; clear",
+    "Right-click for <em>conditional</em> (AND/OR)",
   ].join(" &middot; ");
   mainContent.appendChild(instructions);
 
-  // Hero tree selector (above trees if multiple hero options)
+  // Tab bar
+  const tabs = document.createElement("div");
+  tabs.className = "tree-tabs";
+
+  type TabEntry = { key: string; label: string; tree: TalentTree };
+  const tabEntries: TabEntry[] = [
+    { key: "class", label: "Class", tree: classTree },
+  ];
+  if (heroTree) {
+    tabEntries.push({
+      key: "hero",
+      label: "Hero",
+      tree: heroTree,
+    });
+  }
+  tabEntries.push({ key: "spec", label: "Spec", tree: specTree });
+
+  const containers = new Map<string, HTMLElement>();
+  const tabBtns: HTMLButtonElement[] = [];
+
+  for (const entry of tabEntries) {
+    const btn = document.createElement("button");
+    btn.className = "tree-tab";
+    btn.textContent = entry.label;
+    btn.dataset.key = entry.key;
+    tabBtns.push(btn);
+    tabs.appendChild(btn);
+
+    const container = document.createElement("div");
+    container.className = "tree-view-container";
+    container.style.display = "none";
+    new TalentTreeView(container).render(entry.tree);
+    containers.set(entry.key, container);
+  }
+
+  // Hero tree selector (shown below tabs when hero tab is active)
+  let heroSelector: HTMLElement | null = null;
   if (heroTree) {
     const spec = state.activeSpec!;
     if (spec.heroTrees.length > 1) {
-      const selector = document.createElement("div");
-      selector.className = "hero-selector";
+      heroSelector = document.createElement("div");
+      heroSelector.className = "hero-selector";
+      heroSelector.style.display = "none";
       for (const ht of spec.heroTrees) {
         const btn = document.createElement("button");
         btn.textContent = ht.subTreeName || "Hero Tree";
         if (ht === heroTree) btn.classList.add("active");
-        btn.addEventListener("click", () => state.selectHeroTree(ht));
-        selector.appendChild(btn);
+        btn.addEventListener("click", () => {
+          activeTreeTab = "hero";
+          state.selectHeroTree(ht);
+        });
+        heroSelector.appendChild(btn);
       }
-      mainContent.appendChild(selector);
     }
   }
 
-  // Tree container — class, hero, spec side-by-side
-  const treeRow = document.createElement("div");
-  treeRow.className = "tree-row";
-
-  const classContainer = document.createElement("div");
-  classContainer.className = "tree-column";
-  new TalentTreeView(classContainer).render(classTree);
-  treeRow.appendChild(classContainer);
-
-  if (heroTree) {
-    const heroContainer = document.createElement("div");
-    heroContainer.className = "tree-column";
-    new TalentTreeView(heroContainer).render(heroTree);
-    treeRow.appendChild(heroContainer);
+  function activateTab(key: string): void {
+    activeTreeTab = key;
+    for (const [k, c] of containers) {
+      c.style.display = k === key ? "" : "none";
+    }
+    for (const btn of tabBtns) {
+      btn.classList.toggle("active", btn.dataset.key === key);
+    }
+    if (heroSelector) {
+      heroSelector.style.display = key === "hero" ? "" : "none";
+    }
   }
 
-  const specContainer = document.createElement("div");
-  specContainer.className = "tree-column";
-  new TalentTreeView(specContainer).render(specTree);
-  treeRow.appendChild(specContainer);
+  for (const btn of tabBtns) {
+    btn.addEventListener("click", () => activateTab(btn.dataset.key!));
+  }
 
-  mainContent.appendChild(treeRow);
+  mainContent.appendChild(tabs);
+  if (heroSelector) mainContent.appendChild(heroSelector);
+  for (const container of containers.values()) {
+    mainContent.appendChild(container);
+  }
+
+  // Restore last active tab, or default to class
+  const validKeys = tabEntries.map((e) => e.key);
+  if (!validKeys.includes(activeTreeTab)) activeTreeTab = "class";
+  activateTab(activeTreeTab);
 
   scheduleCount();
 }
 
-function serializeTree(tree: TalentTree): object {
-  return { ...tree, nodes: Object.fromEntries(tree.nodes) };
+function runValidation(): void {
+  const spec = state.activeSpec;
+  if (!spec) return;
+
+  const errors: string[] = [];
+  const trees = [spec.classTree, spec.specTree];
+  const heroTree = state.activeHeroTree;
+  if (heroTree) trees.push(heroTree);
+
+  for (const tree of trees) {
+    const treeConstraints = state.getConstraintsForTree(tree);
+    const treeErrors = validateTree(tree, treeConstraints);
+    const label = tree.type.charAt(0).toUpperCase() + tree.type.slice(1);
+    for (const err of treeErrors) {
+      errors.push(`${label}: ${err.message}`);
+    }
+  }
+
+  state.setValidationErrors(errors);
 }
 
-function scheduleCount(): void {
+// --- Counting ---
+
+function detectTreeKey(nodeId: number): CountKey | null {
+  const spec = state.activeSpec;
+  if (!spec) return null;
+  if (spec.classTree.nodes.has(nodeId)) return "classCount";
+  if (spec.specTree.nodes.has(nodeId)) return "specCount";
+  const heroTree = state.activeHeroTree;
+  if (heroTree?.nodes.has(nodeId)) return "heroCount";
+  return null;
+}
+
+function scheduleCount(affectedTree?: CountKey): void {
+  if (affectedTree) {
+    dirtyTrees.add(affectedTree);
+  } else {
+    dirtyTrees.add("classCount");
+    dirtyTrees.add("specCount");
+    dirtyTrees.add("heroCount");
+  }
   if (countDebounceTimer) clearTimeout(countDebounceTimer);
   countDebounceTimer = setTimeout(runCount, SOLVER_DEBOUNCE_MS);
 }
 
-function runCount(): void {
-  for (const w of countWorkers) w.terminate();
-  countWorkers = [];
+function publishCounts(): void {
+  const classCount = cachedDetails.classCount.count;
+  const specCount = cachedDetails.specCount.count;
+  const heroCount = cachedDetails.heroCount.count;
+  state.updateCounts({
+    classCount,
+    specCount,
+    heroCount,
+    totalCount: classCount * specCount * heroCount,
+    details: {
+      class: cachedDetails.classCount,
+      spec: cachedDetails.specCount,
+      hero: cachedDetails.heroCount,
+    },
+  });
+}
 
+function runCount(): void {
   const spec = state.activeSpec;
   if (!spec) return;
 
-  const trees: { tree: TalentTree; key: keyof TreeCounts }[] = [
+  const allTrees: { tree: TalentTree; key: CountKey }[] = [
     { tree: spec.classTree, key: "classCount" },
     { tree: spec.specTree, key: "specCount" },
   ];
 
   const heroTree = state.activeHeroTree;
   if (heroTree) {
-    trees.push({ tree: heroTree, key: "heroCount" });
+    allTrees.push({ tree: heroTree, key: "heroCount" });
   }
 
-  const counts: TreeCounts = {
-    classCount: 1,
-    specCount: 1,
-    heroCount: 1,
-    totalCount: 0,
-  };
+  const treesToCount = allTrees.filter(({ key }) => dirtyTrees.has(key));
+  dirtyTrees.clear();
 
-  let pending = trees.length;
+  if (treesToCount.length === 0) return;
 
-  for (const { tree, key } of trees) {
-    const worker = new Worker(
-      new URL("../worker/solver.worker.ts", import.meta.url),
-      { type: "module" },
-    );
-
+  for (const { tree, key } of treesToCount) {
     const constraints = state.getConstraintsForTree(tree);
-    worker.postMessage({
-      type: "count",
-      config: {
-        tree: serializeTree(tree),
-        constraints: Object.fromEntries(constraints),
-      },
-    });
+    const start = performance.now();
+    try {
+      const count = countBuildsFast(tree, constraints);
+      cachedDetails[key] = { count, durationMs: performance.now() - start };
+    } catch (err) {
+      console.error(`Solver error for ${key}:`, err);
+      cachedDetails[key] = { count: 0n, durationMs: 0 };
+    }
+  }
 
-    worker.onmessage = (event) => {
-      if (event.data.type === "count") {
-        counts[key] = event.data.result.count;
-        pending--;
-        if (pending === 0) {
-          counts.totalCount =
-            counts.classCount * counts.specCount * counts.heroCount;
-          state.updateCounts(counts);
-        }
-        worker.terminate();
-      } else if (event.data.type === "error") {
-        console.error(`Solver error for ${key}:`, event.data.message);
-        pending--;
-        worker.terminate();
-      }
-    };
+  publishCounts();
+}
 
-    countWorkers.push(worker);
+// --- Implied predecessors ---
+
+function computeImpliedPredecessors(
+  nodeId: number,
+  tree: TalentTree,
+): number[] {
+  const implied: number[] = [];
+  let current = tree.nodes.get(nodeId);
+
+  while (
+    current &&
+    !current.entryNode &&
+    !current.freeNode &&
+    current.prev.length > 0
+  ) {
+    // Filter out "never" predecessors
+    const available = current.prev.filter(
+      (id) => state.constraints.get(id)?.type !== "never",
+    );
+    if (available.length !== 1) break; // Multiple paths — user must choose
+
+    const prevId = available[0];
+    const prev = tree.nodes.get(prevId);
+    if (!prev) break;
+
+    // Don't imply nodes that are already user-constrained
+    if (!state.constraints.has(prevId)) {
+      implied.push(prevId);
+    }
+    current = prev;
+  }
+  return implied;
+}
+
+function findTreeForNode(nodeId: number): TalentTree | null {
+  const spec = state.activeSpec;
+  if (!spec) return null;
+  if (spec.classTree.nodes.has(nodeId)) return spec.classTree;
+  if (spec.specTree.nodes.has(nodeId)) return spec.specTree;
+  const heroTree = state.activeHeroTree;
+  if (heroTree?.nodes.has(nodeId)) return heroTree;
+  return null;
+}
+
+// --- Auto-select hero nodes ---
+
+function isRealChoice(node: TalentNode): boolean {
+  return node.type === "choice" && !node.isApex;
+}
+
+function autoSelectHeroNodes(tree: TalentTree): void {
+  for (const node of tree.nodes.values()) {
+    if (state.constraints.has(node.id)) continue;
+    if (!isRealChoice(node)) {
+      state.setConstraint({ nodeId: node.id, type: "always" });
+    }
   }
 }
+
+// --- Event handling ---
 
 state.subscribe((event) => {
   switch (event.type) {
     case "spec-selected": {
       const spec = event.spec;
       const heroTree = spec.heroTrees[0] ?? null;
-      if (heroTree) state.selectHeroTree(heroTree);
-      renderTrees(spec.classTree, spec.specTree, heroTree);
+      if (heroTree) {
+        state.selectHeroTree(heroTree);
+        // hero-tree-selected handler renders + auto-selects
+      } else {
+        renderTrees(spec.classTree, spec.specTree, null);
+      }
       break;
     }
     case "hero-tree-selected": {
       const spec = state.activeSpec;
       if (spec) {
         renderTrees(spec.classTree, spec.specTree, event.tree);
+        autoSelectHeroNodes(event.tree);
       }
       break;
     }
-    case "constraint-changed":
-    case "constraint-removed":
-      scheduleCount();
+    case "constraint-changed": {
+      const nodeId = event.constraint.nodeId;
+      const key = detectTreeKey(nodeId);
+
+      // Handle implied predecessors
+      if (event.constraint.type === "always") {
+        const tree = findTreeForNode(nodeId);
+        if (tree) {
+          const implied = computeImpliedPredecessors(nodeId, tree);
+          state.setImpliedConstraints(nodeId, implied);
+        }
+      } else {
+        state.clearImpliedConstraints(nodeId);
+      }
+
+      // If user explicitly clicks an implied node, it becomes user-owned
+      if (state.isImplied(nodeId)) {
+        state.promoteImpliedToUser(nodeId);
+      }
+
+      runValidation();
+      if (key) scheduleCount(key);
       break;
+    }
+    case "constraint-removed": {
+      state.clearImpliedConstraints(event.nodeId);
+      runValidation();
+      const key = detectTreeKey(event.nodeId);
+      if (key) scheduleCount(key);
+      break;
+    }
   }
 });
+
+// --- Save/Load ---
+
+async function saveLoadout(): Promise<void> {
+  const spec = state.activeSpec;
+  if (!spec) return;
+
+  const loadout: Loadout = {
+    version: 1,
+    className: spec.className,
+    specName: spec.specName,
+    heroTreeName: state.activeHeroTree?.subTreeName,
+    constraints: Array.from(state.constraints.values()),
+  };
+
+  await electronAPI.saveLoadout(loadout);
+}
+
+async function loadLoadout(): Promise<void> {
+  const loadout = await electronAPI.loadLoadout();
+  if (!loadout) return;
+
+  const spec = state.specs.find(
+    (s) => s.className === loadout.className && s.specName === loadout.specName,
+  );
+  if (!spec) return;
+
+  // Select spec (clears existing constraints)
+  state.selectSpec(spec);
+
+  // Select hero tree
+  if (loadout.heroTreeName) {
+    const heroTree = spec.heroTrees.find(
+      (ht) => ht.subTreeName === loadout.heroTreeName,
+    );
+    if (heroTree) state.selectHeroTree(heroTree);
+  }
+
+  // Restore constraints
+  for (const constraint of loadout.constraints) {
+    state.setConstraint(constraint);
+  }
+}
+
+// Header save/load buttons
+const headerActions = document.createElement("div");
+headerActions.className = "header-actions";
+
+const headerLoadBtn = document.createElement("button");
+headerLoadBtn.className = "btn btn-secondary btn-sm";
+headerLoadBtn.textContent = "Load";
+headerLoadBtn.addEventListener("click", loadLoadout);
+headerActions.appendChild(headerLoadBtn);
+
+const headerSaveBtn = document.createElement("button");
+headerSaveBtn.className = "btn btn-secondary btn-sm";
+headerSaveBtn.textContent = "Save";
+headerSaveBtn.addEventListener("click", saveLoadout);
+headerActions.appendChild(headerSaveBtn);
+
+headerEl.appendChild(headerActions);
 
 async function init(): Promise<void> {
   try {

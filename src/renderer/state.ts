@@ -15,11 +15,13 @@ class AppState {
   private _activeHeroTree: TalentTree | null = null;
   private _constraints = new Map<number, Constraint>();
   private _counts: TreeCounts = {
-    classCount: 0,
-    specCount: 0,
-    heroCount: 0,
-    totalCount: 0,
+    classCount: 0n,
+    specCount: 0n,
+    heroCount: 0n,
+    totalCount: 0n,
   };
+  private _validationErrors: string[] = [];
+  private _impliedBy = new Map<number, Set<number>>();
 
   get specs(): Specialization[] {
     return this._specs;
@@ -35,6 +37,9 @@ class AppState {
   }
   get counts(): TreeCounts {
     return this._counts;
+  }
+  get validationErrors(): string[] {
+    return this._validationErrors;
   }
 
   subscribe(listener: Listener): () => void {
@@ -60,6 +65,8 @@ class AppState {
     this._activeSpec = spec;
     this._activeHeroTree = null;
     this._constraints.clear();
+    this._impliedBy.clear();
+    this._validationErrors = [];
     this.emit({ type: "spec-selected", spec });
   }
 
@@ -91,6 +98,46 @@ class AppState {
   updateCounts(counts: TreeCounts): void {
     this._counts = counts;
     this.emit({ type: "count-updated", counts });
+  }
+
+  setValidationErrors(errors: string[]): void {
+    this._validationErrors = errors;
+    this.emit({ type: "validation-errors", errors });
+  }
+
+  setImpliedConstraints(sourceId: number, impliedIds: number[]): void {
+    this.clearImpliedConstraints(sourceId);
+    if (impliedIds.length === 0) return;
+    this._impliedBy.set(sourceId, new Set(impliedIds));
+    for (const id of impliedIds) {
+      if (!this._constraints.has(id)) {
+        this._constraints.set(id, { nodeId: id, type: "always" });
+      }
+    }
+  }
+
+  clearImpliedConstraints(sourceId: number): void {
+    const implied = this._impliedBy.get(sourceId);
+    if (!implied) return;
+    for (const id of implied) {
+      if (this.isImplied(id)) {
+        this._constraints.delete(id);
+      }
+    }
+    this._impliedBy.delete(sourceId);
+  }
+
+  isImplied(nodeId: number): boolean {
+    for (const impliedSet of this._impliedBy.values()) {
+      if (impliedSet.has(nodeId)) return true;
+    }
+    return false;
+  }
+
+  promoteImpliedToUser(nodeId: number): void {
+    for (const impliedSet of this._impliedBy.values()) {
+      impliedSet.delete(nodeId);
+    }
   }
 
   getConstraintsForTree(tree: TalentTree): Map<number, Constraint> {

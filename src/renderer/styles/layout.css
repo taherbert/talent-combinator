@@ -1,7 +1,7 @@
 #app {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: var(--header-height) 1fr var(--counter-height);
+  grid-template-rows: var(--header-height) 1fr auto;
   grid-template-areas:
     "header"
     "main"
@@ -34,6 +34,13 @@
   color: var(--text-secondary);
   -webkit-app-region: no-drag;
   cursor: pointer;
+}
+
+.header-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
 }
 
 /* Sidebar toggle button */
@@ -97,6 +104,7 @@
   padding: 16px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 12px;
 }
 
@@ -105,10 +113,12 @@
   grid-area: counter;
   display: none;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
+  justify-content: center;
+  padding: 6px 16px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border-default);
+  gap: 4px 16px;
+  flex-wrap: wrap;
 }
 
 .counter-bar.visible {
@@ -117,6 +127,7 @@
 
 /* Instructions bar */
 .instructions-bar {
+  align-self: stretch;
   padding: 6px 12px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-default);
@@ -143,18 +154,45 @@
   color: var(--color-red);
 }
 
-/* Horizontal tree layout */
-.tree-row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: center;
+/* Tree layout — tab-based single-tree view */
+.tree-tabs {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 4px;
+  align-self: center;
 }
 
-.tree-column {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
+.tree-tab {
+  padding: 6px 20px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tree-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.tree-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.tree-view-container {
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 /* Tree sections */
@@ -166,17 +204,7 @@
 }
 
 .tree-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-default);
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
+  display: none;
 }
 
 .tree-svg-container {
@@ -186,6 +214,7 @@
 
 /* Splash screen — spec picker */
 .splash-screen {
+  align-self: stretch;
   display: flex;
   flex-direction: column;
   align-items: center;

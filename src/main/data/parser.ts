@@ -7,6 +7,11 @@ import type {
   TalentTree,
   TierGate,
 } from "../../shared/types";
+import {
+  POINT_BUDGET_CLASS,
+  POINT_BUDGET_SPEC,
+  POINT_BUDGET_HERO,
+} from "../../shared/constants";
 
 function parseEntry(raw: RawTalentNode["entries"][number]): TalentEntry {
   return {
@@ -15,6 +20,7 @@ function parseEntry(raw: RawTalentNode["entries"][number]): TalentEntry {
     maxRanks: raw.maxRanks,
     index: raw.index,
     icon: raw.icon ?? "",
+    spellId: raw.spellId,
   };
 }
 
@@ -56,6 +62,7 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
       col: Math.round(raw.posX / 300),
       freeNode: raw.freeNode ?? false,
       entryNode: raw.entryNode ?? false,
+      isApex: false,
       subTreeId: raw.subTreeId,
     });
   }
@@ -106,11 +113,30 @@ function buildTree(
   subTreeName?: string,
 ): TalentTree {
   const nodes = parseNodes(rawNodes);
+
+  // Mark apex (capstone) nodes in hero trees — leaf nodes that are always taken
+  if (type === "hero") {
+    for (const node of nodes.values()) {
+      if (node.next.length === 0) {
+        node.isApex = true;
+      }
+    }
+  }
+
+  const maxPoints = computeMaxPoints(nodes);
+  const pointBudget =
+    type === "class"
+      ? POINT_BUDGET_CLASS
+      : type === "spec"
+        ? POINT_BUDGET_SPEC
+        : POINT_BUDGET_HERO;
+
   return {
     type,
     nodes,
     gates: computeGates(nodes),
-    maxPoints: computeMaxPoints(nodes),
+    maxPoints,
+    pointBudget,
     totalNodes: nodes.size,
     subTreeId,
     subTreeName,

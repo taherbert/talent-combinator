@@ -6,6 +6,7 @@ export interface RawTalentEntry {
   maxRanks: number;
   index: number;
   icon?: string;
+  spellId?: number;
 }
 
 export interface RawTalentNode {
@@ -57,6 +58,7 @@ export interface TalentEntry {
   maxRanks: number;
   index: number;
   icon: string;
+  spellId?: number;
 }
 
 export interface TalentNode {
@@ -73,6 +75,7 @@ export interface TalentNode {
   col: number;
   freeNode: boolean;
   entryNode: boolean;
+  isApex: boolean;
   subTreeId?: number;
 }
 
@@ -86,6 +89,7 @@ export interface TalentTree {
   nodes: Map<number, TalentNode>;
   gates: TierGate[];
   maxPoints: number;
+  pointBudget: number;
   totalNodes: number;
   subTreeId?: number;
   subTreeName?: string;
@@ -123,7 +127,8 @@ export type NodeState =
   | "available"
   | "always"
   | "never"
-  | "conditional";
+  | "conditional"
+  | "implied";
 
 // --- Solver types ---
 
@@ -149,7 +154,7 @@ export type WorkerRequest =
   | { type: "generate"; config: SolverConfig };
 
 export type WorkerResponse =
-  | { type: "count"; result: { count: number; durationMs: number } }
+  | { type: "count"; result: { count: string; durationMs: number } }
   | { type: "generate"; result: SolverResult }
   | { type: "progress"; current: number; total: number }
   | { type: "error"; message: string };
@@ -162,9 +167,25 @@ export interface TalentDataResult {
   cached: boolean;
 }
 
+export interface SpellTooltip {
+  meta: string; // "25 Energy · Melee Range · Instant · 45 sec cooldown"
+  desc: string; // The ability description text
+}
+
+export interface Loadout {
+  version: 1;
+  className: string;
+  specName: string;
+  heroTreeName?: string;
+  constraints: Constraint[];
+}
+
 export interface ElectronAPI {
   fetchTalentData: () => Promise<TalentDataResult>;
+  fetchSpellTooltip: (spellId: number) => Promise<SpellTooltip | null>;
   saveFile: (content: string, defaultName: string) => Promise<boolean>;
+  saveLoadout: (data: Loadout) => Promise<boolean>;
+  loadLoadout: () => Promise<Loadout | null>;
   getAppVersion: () => Promise<string>;
 }
 
@@ -176,12 +197,23 @@ export type AppEvent =
   | { type: "constraint-changed"; constraint: Constraint }
   | { type: "constraint-removed"; nodeId: number }
   | { type: "count-updated"; counts: TreeCounts }
+  | { type: "validation-errors"; errors: string[] }
   | { type: "generation-complete"; result: SolverResult }
   | { type: "data-loaded"; data: TalentDataResult };
 
+export interface TreeCountDetail {
+  count: bigint;
+  durationMs: number;
+}
+
 export interface TreeCounts {
-  classCount: number;
-  specCount: number;
-  heroCount: number;
-  totalCount: number;
+  classCount: bigint;
+  specCount: bigint;
+  heroCount: bigint;
+  totalCount: bigint;
+  details?: {
+    class?: TreeCountDetail;
+    spec?: TreeCountDetail;
+    hero?: TreeCountDetail;
+  };
 }

@@ -4,7 +4,7 @@ import type {
   Constraint,
   WorkerResponse,
 } from "../shared/types";
-import { countBuilds, generateBuilds } from "./solver/engine";
+import { countBuildsFast, generateBuilds } from "./solver/engine";
 
 // Structured clone converts Maps to plain objects across worker boundaries
 function toNumberKeyedMap<V>(raw: unknown): Map<number, V> {
@@ -37,10 +37,13 @@ self.onmessage = (event: MessageEvent) => {
   try {
     if (type === "count") {
       const startTime = performance.now();
-      const count = countBuilds(tree, constraints);
+      const count = countBuildsFast(tree, constraints);
       const response: WorkerResponse = {
         type: "count",
-        result: { count, durationMs: performance.now() - startTime },
+        result: {
+          count: count.toString(),
+          durationMs: performance.now() - startTime,
+        },
       };
       self.postMessage(response);
     } else if (type === "generate") {

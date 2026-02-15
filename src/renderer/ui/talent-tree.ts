@@ -7,6 +7,7 @@ import type {
   TalentNode,
   NodeState,
   Constraint,
+  SpellTooltip,
 } from "../../shared/types";
 import {
   NODE_SIZE,
@@ -15,7 +16,10 @@ import {
   TREE_PADDING,
 } from "../../shared/constants";
 
+declare const electronAPI: import("../../shared/types").ElectronAPI;
+
 const SVG_NS = "http://www.w3.org/2000/svg";
+const descriptionCache = new Map<number, SpellTooltip | null>();
 
 export class TalentTreeView {
   private container: HTMLElement;
@@ -24,7 +28,9 @@ export class TalentTreeView {
   private tree: TalentTree | null = null;
   private conditionEditor: ConditionEditor;
   private tooltipEl: HTMLElement;
-  private nodePopover: HTMLElement | null = null;
+  private rankPopover: HTMLElement | null = null;
+  private hoveredNode: TalentNode | null = null;
+  private lastHoverEvent: MouseEvent | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -38,6 +44,10 @@ export class TalentTreeView {
       ) {
         this.updateNodeStates();
         this.updateConnectors();
+        // Refresh tooltip if hovering over a node
+        if (this.hoveredNode && this.lastHoverEvent) {
+          this.renderTooltip(this.hoveredNode, this.lastHoverEvent);
+        }
       }
     });
   }
@@ -83,7 +93,7 @@ export class TalentTreeView {
     svg.setAttribute("height", String(height));
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-    // Tier gates (visual separators only)
+    // Tier gates — subtle line + label
     const gateGroup = document.createElementNS(SVG_NS, "g");
     for (const gate of tree.gates) {
       const y =
@@ -101,6 +111,14 @@ export class TalentTreeView {
       line.setAttribute("x2", String(width));
       line.setAttribute("y2", String(y));
       gateGroup.appendChild(line);
+
+      const label = `${gate.requiredPoints} pts`;
+      const labelText = document.createElementNS(SVG_NS, "text");
+      labelText.classList.add("tier-gate-label");
+      labelText.setAttribute("x", String(width - 6));
+      labelText.setAttribute("y", String(y - 4));
+      labelText.textContent = label;
+      gateGroup.appendChild(labelText);
     }
 
     // Connectors
@@ -162,17 +180,22 @@ export class TalentTreeView {
   }
 
   private handleClick(node: TalentNode, event: MouseEvent): void {
-    // Choice nodes or multi-rank nodes get a popover
-    if (node.type === "choice" || node.maxRanks > 1) {
+    // Multi-rank or choice nodes get a popover
+    const hasDistinctChoices =
+      node.type === "choice" &&
+      !node.isApex &&
+      new Set(node.entries.map((e) => e.name || e.id)).size > 1;
+
+    if (node.maxRanks > 1 || hasDistinctChoices) {
       this.showNodePopover(node, event.clientX, event.clientY);
       return;
     }
 
-    // Single-rank non-choice: simple cycle
-    const currentType = state.constraints.get(node.id)?.type;
-    if (!currentType) {
+    // Simple single-rank nodes: click-to-cycle
+    const current = state.constraints.get(node.id);
+    if (!current) {
       state.setConstraint({ nodeId: node.id, type: "always" });
-    } else if (currentType === "always") {
+    } else if (current.type === "always") {
       state.setConstraint({ nodeId: node.id, type: "never" });
     } else {
       state.removeConstraint(node.id);
@@ -180,7 +203,9 @@ export class TalentTreeView {
   }
 
   private showNodePopover(node: TalentNode, x: number, y: number): void {
-    this.closeNodePopover();
+    this.closeRankPopover();
+    this.hoveredNode = null;
+    this.tooltipEl.innerHTML = "";
 
     const popover = document.createElement("div");
     popover.className = "node-popover";
@@ -206,19 +231,26 @@ export class TalentTreeView {
       btn.textContent = label;
       btn.addEventListener("click", () => {
         onClick();
-        this.closeNodePopover();
+        this.closeRankPopover();
       });
       popover.appendChild(btn);
     };
 
-    if (node.type === "choice") {
+    const hasDistinctChoices =
+      node.type === "choice" &&
+      !node.isApex &&
+      new Set(node.entries.map((e) => e.name || e.id)).size > 1;
+
+    if (hasDistinctChoices) {
+      // Choice node: one button per entry
       for (let i = 0; i < node.entries.length; i++) {
         const entry = node.entries[i];
+        const entryName = entry.name || `Choice ${i + 1}`;
         const active =
           current?.type === "always" && current.entryIndex === i
             ? "active-always"
             : null;
-        addBtn(`Always: ${entry.name || `Choice ${i + 1}`}`, active, () =>
+        addBtn(`Always: ${entryName}`, active, () =>
           state.setConstraint({
             nodeId: node.id,
             type: "always",
@@ -227,16 +259,15 @@ export class TalentTreeView {
         );
       }
 
-      const eitherActive =
+      const anyActive =
         current?.type === "always" && current.entryIndex == null
           ? "active-always"
           : null;
-      addBtn("Always: Either choice", eitherActive, () =>
+      addBtn("Always (either)", anyActive, () =>
         state.setConstraint({ nodeId: node.id, type: "always" }),
       );
-    }
-
-    if (node.maxRanks > 1 && node.type !== "choice") {
+    } else {
+      // Multi-rank node: one button per rank level
       for (let r = 1; r <= node.maxRanks; r++) {
         const active =
           current?.type === "always" && current.exactRank === r
@@ -269,15 +300,33 @@ export class TalentTreeView {
     }
 
     document.getElementById("dialog-container")!.appendChild(popover);
-    this.nodePopover = popover;
+    this.rankPopover = popover;
 
-    addDismissHandler(popover, () => this.closeNodePopover());
+    // Clamp to viewport
+    requestAnimationFrame(() => {
+      const rect = popover.getBoundingClientRect();
+      const margin = 8;
+      let left = rect.left;
+      let top = rect.top;
+      if (rect.right > window.innerWidth - margin) {
+        left = window.innerWidth - margin - rect.width;
+      }
+      if (rect.bottom > window.innerHeight - margin) {
+        top = window.innerHeight - margin - rect.height;
+      }
+      if (left < margin) left = margin;
+      if (top < margin) top = margin;
+      popover.style.left = `${left}px`;
+      popover.style.top = `${top}px`;
+    });
+
+    addDismissHandler(popover, () => this.closeRankPopover());
   }
 
-  private closeNodePopover(): void {
-    if (this.nodePopover) {
-      this.nodePopover.remove();
-      this.nodePopover = null;
+  private closeRankPopover(): void {
+    if (this.rankPopover) {
+      this.rankPopover.remove();
+      this.rankPopover = null;
     }
   }
 
@@ -292,10 +341,18 @@ export class TalentTreeView {
     entering: boolean,
   ): void {
     if (!entering) {
+      this.hoveredNode = null;
+      this.lastHoverEvent = null;
       this.tooltipEl.innerHTML = "";
       return;
     }
 
+    this.hoveredNode = node;
+    this.lastHoverEvent = event;
+    this.renderTooltip(node, event);
+  }
+
+  private renderTooltip(node: TalentNode, event: MouseEvent): void {
     const tooltip = document.createElement("div");
     tooltip.className = "talent-tooltip";
 
@@ -304,12 +361,43 @@ export class TalentTreeView {
     name.textContent = node.name;
     tooltip.appendChild(name);
 
-    if (node.type === "choice" && node.entries.length > 1) {
-      for (const entry of node.entries) {
-        const entryDiv = document.createElement("div");
-        entryDiv.className = "tooltip-detail";
-        entryDiv.textContent = `Choice: ${entry.name || `Entry ${entry.id}`}`;
-        tooltip.appendChild(entryDiv);
+    // Spell description — show for each entry on choice nodes, or for the node's primary entry
+    const constraint = state.constraints.get(node.id);
+    const entries =
+      node.type === "choice" && node.entries.length > 1
+        ? node.entries
+        : node.entries.slice(0, 1);
+
+    for (const entry of entries) {
+      if (node.type === "choice" && node.entries.length > 1) {
+        const label = document.createElement("div");
+        label.className = "tooltip-entry-name";
+        label.textContent = entry.name || `Entry ${entry.id}`;
+        tooltip.appendChild(label);
+      }
+
+      if (entry.spellId) {
+        const cached = descriptionCache.get(entry.spellId);
+        if (cached !== undefined) {
+          if (cached) {
+            if (cached.meta) {
+              const metaEl = document.createElement("div");
+              metaEl.className = "tooltip-meta";
+              metaEl.textContent = cached.meta;
+              tooltip.appendChild(metaEl);
+            }
+            const descEl = document.createElement("div");
+            descEl.className = "tooltip-desc";
+            descEl.textContent = cached.desc;
+            tooltip.appendChild(descEl);
+          }
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "tooltip-desc";
+          placeholder.textContent = "Loading...";
+          tooltip.appendChild(placeholder);
+          this.fetchDescription(entry.spellId, placeholder, tooltip, event);
+        }
       }
     }
 
@@ -320,22 +408,64 @@ export class TalentTreeView {
       tooltip.appendChild(rank);
     }
 
-    const constraint = state.constraints.get(node.id);
     if (constraint) {
       const statusDiv = document.createElement("div");
-      statusDiv.className = "tooltip-status";
+      statusDiv.className = `tooltip-status status-${constraint.type}`;
       statusDiv.textContent = this.constraintLabel(constraint, node);
       tooltip.appendChild(statusDiv);
     }
 
-    tooltip.style.left = `${event.clientX + 12}px`;
-    tooltip.style.top = `${event.clientY + 12}px`;
-
     this.tooltipEl.innerHTML = "";
     this.tooltipEl.appendChild(tooltip);
+
+    this.positionTooltip(tooltip, event);
+  }
+
+  private fetchDescription(
+    spellId: number,
+    placeholder: HTMLElement,
+    tooltip: HTMLElement,
+    event: MouseEvent,
+  ): void {
+    electronAPI.fetchSpellTooltip(spellId).then((result) => {
+      descriptionCache.set(spellId, result);
+      if (this.hoveredNode && placeholder.isConnected) {
+        if (result) {
+          if (result.meta) {
+            const metaEl = document.createElement("div");
+            metaEl.className = "tooltip-meta";
+            metaEl.textContent = result.meta;
+            placeholder.before(metaEl);
+          }
+          placeholder.textContent = result.desc;
+        } else {
+          placeholder.remove();
+        }
+        this.positionTooltip(tooltip, event);
+      }
+    });
+  }
+
+  private positionTooltip(tooltip: HTMLElement, event: MouseEvent): void {
+    const pad = 12;
+    let left = event.clientX + pad;
+    let top = event.clientY + pad;
+    requestAnimationFrame(() => {
+      const rect = tooltip.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight) {
+        top = event.clientY - rect.height - pad;
+      }
+      if (rect.right > window.innerWidth) {
+        left = event.clientX - rect.width - pad;
+      }
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    });
   }
 
   private constraintLabel(constraint: Constraint, node: TalentNode): string {
+    if (constraint.type === "never") return "never";
+    if (constraint.type === "conditional") return "conditional";
     if (constraint.type !== "always") return constraint.type;
     if (constraint.entryIndex != null) {
       const entryName =
@@ -354,7 +484,12 @@ export class TalentTreeView {
 
     for (const [nodeId, view] of this.nodeViews) {
       const constraint = state.constraints.get(nodeId);
-      const nodeState: NodeState = constraint?.type ?? "available";
+      let nodeState: NodeState;
+      if (constraint?.type === "always" && state.isImplied(nodeId)) {
+        nodeState = "implied";
+      } else {
+        nodeState = constraint?.type ?? "available";
+      }
       view.setState(nodeState, constraint);
     }
   }
@@ -364,20 +499,24 @@ export class TalentTreeView {
 
     for (const [key, line] of this.connectors) {
       const [fromIdStr, toIdStr] = key.split("-");
-      const fromConstraint = state.constraints.get(Number(fromIdStr));
-      const toConstraint = state.constraints.get(Number(toIdStr));
+      const fromId = Number(fromIdStr);
+      const toId = Number(toIdStr);
+      const fromConstraint = state.constraints.get(fromId);
+      const toConstraint = state.constraints.get(toId);
 
       line.classList.remove("active", "possible", "impossible");
 
       const fromNever = fromConstraint?.type === "never";
       const toNever = toConstraint?.type === "never";
       const fromAlways = fromConstraint?.type === "always";
+      const toAlways = toConstraint?.type === "always";
 
       if (fromNever || toNever) {
-        // Either end excluded — path is impossible
         line.classList.add("impossible");
+      } else if (fromAlways && toAlways) {
+        // Both ends forced (includes implied) — solid active path
+        line.classList.add("possible");
       } else if (fromAlways) {
-        // Source included — path is possible
         line.classList.add("possible");
       } else if (fromConstraint || toConstraint) {
         line.classList.add("active");

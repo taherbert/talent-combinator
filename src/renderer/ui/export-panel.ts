@@ -31,7 +31,8 @@ export class ExportPanel {
     state.subscribe((event) => {
       if (event.type === "count-updated") {
         const total = event.counts.totalCount;
-        this.generateBtn.disabled = total === 0 || total > MAX_PROFILESETS;
+        this.generateBtn.disabled =
+          total <= 0 || total === -1 || total > MAX_PROFILESETS;
       }
     });
   }
