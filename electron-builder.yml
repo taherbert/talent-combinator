@@ -1,0 +1,21 @@
+appId: com.talentcombinator.app
+productName: Talent Combinator
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**/*
+  - "!node_modules/**/*"
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.utilities
+win:
+  target:
+    - nsis
+    - portable
+linux:
+  target:
+    - AppImage
+    - deb
