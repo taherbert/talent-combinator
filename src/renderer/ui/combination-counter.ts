@@ -46,7 +46,7 @@ export class CombinationCounter {
     this.el.appendChild(countDisplay);
 
     this.countEl.textContent = "";
-    this.breakdownEl.textContent = "Counting...";
+    this.breakdownEl.textContent = "";
     this.warningEl.textContent = "";
     this.timingEl.textContent = "";
 

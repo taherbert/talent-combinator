@@ -22,6 +22,7 @@ class AppState {
   };
   private _validationErrors: string[] = [];
   private _impliedBy = new Map<number, Set<number>>();
+  private _userOwned = new Set<number>();
 
   get specs(): Specialization[] {
     return this._specs;
@@ -66,6 +67,7 @@ class AppState {
     this._activeHeroTree = null;
     this._constraints.clear();
     this._impliedBy.clear();
+    this._userOwned.clear();
     this._validationErrors = [];
     this.emit({ type: "spec-selected", spec });
   }
@@ -80,17 +82,33 @@ class AppState {
       );
       if (fromOtherHero) {
         this._constraints.delete(nodeId);
+        this._userOwned.delete(nodeId);
+      }
+    }
+    for (const sourceId of [...this._impliedBy.keys()]) {
+      if (!tree.nodes.has(sourceId)) {
+        const fromOtherHero = this._activeSpec?.heroTrees.some(
+          (ht) => ht !== tree && ht.nodes.has(sourceId),
+        );
+        if (fromOtherHero) this._impliedBy.delete(sourceId);
       }
     }
     this.emit({ type: "hero-tree-selected", tree });
   }
 
   setConstraint(constraint: Constraint): void {
+    this._userOwned.add(constraint.nodeId);
     this._constraints.set(constraint.nodeId, constraint);
     this.emit({ type: "constraint-changed", constraint });
   }
 
+  setConstraintQuiet(constraint: Constraint): void {
+    this._userOwned.add(constraint.nodeId);
+    this._constraints.set(constraint.nodeId, constraint);
+  }
+
   removeConstraint(nodeId: number): void {
+    this._userOwned.delete(nodeId);
     this._constraints.delete(nodeId);
     this.emit({ type: "constraint-removed", nodeId });
   }
@@ -119,12 +137,20 @@ class AppState {
   clearImpliedConstraints(sourceId: number): void {
     const implied = this._impliedBy.get(sourceId);
     if (!implied) return;
+    this._impliedBy.delete(sourceId);
     for (const id of implied) {
-      if (this.isImplied(id)) {
+      if (!this._userOwned.has(id) && !this.isImplied(id)) {
         this._constraints.delete(id);
       }
     }
-    this._impliedBy.delete(sourceId);
+  }
+
+  clearAllImpliedInTree(tree: TalentTree): void {
+    for (const sourceId of [...this._impliedBy.keys()]) {
+      if (tree.nodes.has(sourceId)) {
+        this.clearImpliedConstraints(sourceId);
+      }
+    }
   }
 
   isImplied(nodeId: number): boolean {
@@ -134,10 +160,15 @@ class AppState {
     return false;
   }
 
+  isUserOwned(nodeId: number): boolean {
+    return this._userOwned.has(nodeId);
+  }
+
   promoteImpliedToUser(nodeId: number): void {
     for (const impliedSet of this._impliedBy.values()) {
       impliedSet.delete(nodeId);
     }
+    this._userOwned.add(nodeId);
   }
 
   getConstraintsForTree(tree: TalentTree): Map<number, Constraint> {

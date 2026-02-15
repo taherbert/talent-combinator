@@ -4,6 +4,7 @@ import { TalentTreeView } from "./ui/talent-tree";
 import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
 import type {
+  Constraint,
   Specialization,
   TalentNode,
   TalentTree,
@@ -12,7 +13,6 @@ import type {
 } from "../shared/types";
 import { SOLVER_DEBOUNCE_MS } from "../shared/constants";
 import { validateTree } from "../shared/validation";
-import { countBuildsFast } from "../worker/solver/engine";
 
 declare const electronAPI: import("../shared/types").ElectronAPI;
 
@@ -286,9 +286,58 @@ function publishCounts(): void {
   });
 }
 
-function runCount(): void {
+let countWorkers: Worker[] = [];
+let countGeneration = 0;
+
+function countTreeInWorker(
+  tree: TalentTree,
+  constraints: Map<number, Constraint>,
+): { worker: Worker; promise: Promise<TreeCountDetail> } {
+  const worker = new Worker(
+    new URL("../worker/solver.worker.ts", import.meta.url),
+    { type: "module" },
+  );
+
+  const promise = new Promise<TreeCountDetail>((resolve) => {
+    worker.onmessage = (event) => {
+      const data = event.data;
+      if (data.type === "count") {
+        resolve({
+          count: BigInt(data.result.count),
+          durationMs: data.result.durationMs,
+        });
+        worker.terminate();
+      } else if (data.type === "error") {
+        console.error("Solver error:", data.message);
+        resolve({ count: 0n, durationMs: 0 });
+        worker.terminate();
+      }
+    };
+    worker.onerror = () => {
+      resolve({ count: 0n, durationMs: 0 });
+      worker.terminate();
+    };
+  });
+
+  worker.postMessage({
+    type: "count",
+    config: {
+      tree: { ...tree, nodes: Object.fromEntries(tree.nodes) },
+      constraints: Object.fromEntries(constraints),
+    },
+  });
+
+  return { worker, promise };
+}
+
+async function runCount(): Promise<void> {
   const spec = state.activeSpec;
   if (!spec) return;
+
+  // Cancel any in-progress counting
+  for (const w of countWorkers) w.terminate();
+  countWorkers = [];
+  const generation = ++countGeneration;
 
   const allTrees: { tree: TalentTree; key: CountKey }[] = [
     { tree: spec.classTree, key: "classCount" },
@@ -305,18 +354,25 @@ function runCount(): void {
 
   if (treesToCount.length === 0) return;
 
-  for (const { tree, key } of treesToCount) {
+  const jobs = treesToCount.map(({ tree, key }) => {
     const constraints = state.getConstraintsForTree(tree);
-    const start = performance.now();
-    try {
-      const count = countBuildsFast(tree, constraints);
-      cachedDetails[key] = { count, durationMs: performance.now() - start };
-    } catch (err) {
-      console.error(`Solver error for ${key}:`, err);
-      cachedDetails[key] = { count: 0n, durationMs: 0 };
-    }
-  }
+    const { worker, promise } = countTreeInWorker(tree, constraints);
+    return { key, worker, promise };
+  });
 
+  countWorkers = jobs.map((j) => j.worker);
+
+  const results = await Promise.all(
+    jobs.map(async (j) => ({ key: j.key, detail: await j.promise })),
+  );
+
+  // Discard stale results if a newer count was started
+  if (generation !== countGeneration) return;
+
+  countWorkers = [];
+  for (const { key, detail } of results) {
+    cachedDetails[key] = detail;
+  }
   publishCounts();
 }
 
@@ -345,8 +401,7 @@ function computeImpliedPredecessors(
     const prev = tree.nodes.get(prevId);
     if (!prev) break;
 
-    // Don't imply nodes that are already user-constrained
-    if (!state.constraints.has(prevId)) {
+    if (!state.isUserOwned(prevId)) {
       implied.push(prevId);
     }
     current = prev;
@@ -364,6 +419,16 @@ function findTreeForNode(nodeId: number): TalentTree | null {
   return null;
 }
 
+function recomputeImpliedForTree(tree: TalentTree): void {
+  state.clearAllImpliedInTree(tree);
+  for (const [nodeId, constraint] of state.constraints) {
+    if (tree.nodes.has(nodeId) && constraint.type === "always") {
+      const implied = computeImpliedPredecessors(nodeId, tree);
+      state.setImpliedConstraints(nodeId, implied);
+    }
+  }
+}
+
 // --- Auto-select hero nodes ---
 
 function isRealChoice(node: TalentNode): boolean {
@@ -371,12 +436,25 @@ function isRealChoice(node: TalentNode): boolean {
 }
 
 function autoSelectHeroNodes(tree: TalentTree): void {
+  const toSelect: TalentNode[] = [];
   for (const node of tree.nodes.values()) {
     if (state.constraints.has(node.id)) continue;
-    if (!isRealChoice(node)) {
-      state.setConstraint({ nodeId: node.id, type: "always" });
-    }
+    if (!isRealChoice(node)) toSelect.push(node);
   }
+  if (toSelect.length === 0) return;
+
+  // Batch: set constraints and compute implied predecessors without
+  // emitting individual events (avoids N separate validations).
+  for (const node of toSelect) {
+    state.setConstraintQuiet({ nodeId: node.id, type: "always" });
+  }
+  for (const node of toSelect) {
+    const implied = computeImpliedPredecessors(node.id, tree);
+    state.setImpliedConstraints(node.id, implied);
+  }
+
+  runValidation();
+  scheduleCount("heroCount");
 }
 
 // --- Event handling ---
@@ -406,28 +484,21 @@ state.subscribe((event) => {
       const nodeId = event.constraint.nodeId;
       const key = detectTreeKey(nodeId);
 
-      // Handle implied predecessors
-      if (event.constraint.type === "always") {
-        const tree = findTreeForNode(nodeId);
-        if (tree) {
-          const implied = computeImpliedPredecessors(nodeId, tree);
-          state.setImpliedConstraints(nodeId, implied);
-        }
-      } else {
-        state.clearImpliedConstraints(nodeId);
-      }
-
-      // If user explicitly clicks an implied node, it becomes user-owned
       if (state.isImplied(nodeId)) {
         state.promoteImpliedToUser(nodeId);
       }
+
+      const tree = findTreeForNode(nodeId);
+      if (tree) recomputeImpliedForTree(tree);
 
       runValidation();
       if (key) scheduleCount(key);
       break;
     }
     case "constraint-removed": {
-      state.clearImpliedConstraints(event.nodeId);
+      const tree = findTreeForNode(event.nodeId);
+      if (tree) recomputeImpliedForTree(tree);
+
       runValidation();
       const key = detectTreeKey(event.nodeId);
       if (key) scheduleCount(key);
