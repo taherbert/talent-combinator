@@ -6,6 +6,11 @@ export interface HashSelection {
   entryIndex?: number; // choice nodes: 0-based entry index
 }
 
+export interface HashDecodeResult {
+  specId: number;
+  selections: HashSelection[];
+}
+
 // Standard base64 alphabet used by the WoW talent import/export system
 const BASE64_CHARS =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -37,15 +42,15 @@ class BitReader {
 /**
  * Decodes a WoW talent import string into a list of selected node choices.
  *
- * nodes must be all nodes for the spec (class + spec + all hero trees).
- * They are iterated in ascending nodeId order, matching the game's encoding.
+ * nodes must be all nodes for the spec (class + spec + all hero trees +
+ * subTree selection nodes), sorted ascending by nodeId to match the game.
  *
  * Returns null if the string fails to parse (invalid format or version).
  */
 export function decodeTalentHash(
   hashStr: string,
   nodes: TalentNode[],
-): HashSelection[] | null {
+): HashDecodeResult | null {
   const clean = hashStr.trim().replace(/=+$/, "").replace(/\s+/g, "");
   if (!clean) return null;
 
@@ -54,7 +59,7 @@ export function decodeTalentHash(
   const version = reader.read(8);
   if (version !== 1 && version !== 2) return null;
 
-  reader.read(16); // specId — not validated here
+  const specId = reader.read(16);
   for (let i = 0; i < 16; i++) reader.read(8); // tree hash — skip
 
   const sortedNodes = [...nodes].sort((a, b) => a.id - b.id);
@@ -80,5 +85,5 @@ export function decodeTalentHash(
     selections.push({ nodeId: node.id, ranks, entryIndex });
   }
 
-  return selections;
+  return { specId, selections };
 }

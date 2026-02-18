@@ -55,6 +55,11 @@ function header(version = 1, specId = 0): number[] {
   return bits;
 }
 
+// Shorthand to extract just the selections array from a decode result
+function sel(hash: string, nodes: ReturnType<typeof node>[]) {
+  return decodeTalentHash(hash, nodes)?.selections ?? null;
+}
+
 describe("decodeTalentHash", () => {
   it("returns null for empty string", () => {
     expect(decodeTalentHash("", [])).toBeNull();
@@ -62,94 +67,85 @@ describe("decodeTalentHash", () => {
 
   it("returns null for unsupported version", () => {
     const bits = header(99);
-    const hash = encodeBits([...bits, 0]); // one node, not selected
+    const hash = encodeBits([...bits, 0]);
     expect(decodeTalentHash(hash, [node(1)])).toBeNull();
   });
 
-  it("returns empty array when no nodes are selected", () => {
-    const bits = [...header(), 0]; // version 1, one node not selected
+  it("includes specId in result", () => {
+    const bits = [...header(1, 577), 0];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(1)]);
-    expect(result).toEqual([]);
+    expect(decodeTalentHash(hash, [node(1)])?.specId).toBe(577);
+  });
+
+  it("returns empty selections when no nodes are selected", () => {
+    const bits = [...header(), 0];
+    const hash = encodeBits(bits);
+    expect(sel(hash, [node(1)])).toEqual([]);
   });
 
   it("decodes a single fully-ranked node (v1)", () => {
-    // node 1: selected=1, purchased=1, notPartial=0, notChoice=0
     const bits = [...header(), 1, 1, 0, 0];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(1)]);
-    expect(result).toEqual([{ nodeId: 1, ranks: 1 }]);
+    expect(sel(hash, [node(1)])).toEqual([{ nodeId: 1, ranks: 1 }]);
   });
 
   it("decodes a 2-rank node at partial rank 1", () => {
-    // node 1: selected=1, purchased=1, partiallyRanked=1, ranks=1 (6 bits), notChoice=0
     const rankBits = [1, 0, 0, 0, 0, 0]; // 1 in 6-bit LSB-first
     const bits = [...header(), 1, 1, 1, ...rankBits, 0];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(1, 2)]);
-    expect(result).toEqual([{ nodeId: 1, ranks: 1 }]);
+    expect(sel(hash, [node(1, 2)])).toEqual([{ nodeId: 1, ranks: 1 }]);
   });
 
   it("decodes a choice node with entry index 1", () => {
-    // node 2: selected=1, purchased=1, notPartial=0, isChoice=1, entryIndex=1 (2 bits)
     const entryBits = [1, 0]; // 1 in 2-bit LSB-first
     const bits = [...header(), 1, 1, 0, 1, ...entryBits];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(2, 1, "choice")]);
-    expect(result).toEqual([{ nodeId: 2, ranks: 1, entryIndex: 1 }]);
+    expect(sel(hash, [node(2, 1, "choice")])).toEqual([
+      { nodeId: 2, ranks: 1, entryIndex: 1 },
+    ]);
   });
 
   it("decodes a choice node with entry index 0", () => {
-    const bits = [...header(), 1, 1, 0, 1, 0, 0]; // entryIndex=0
+    const bits = [...header(), 1, 1, 0, 1, 0, 0];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(5, 1, "choice")]);
-    expect(result).toEqual([{ nodeId: 5, ranks: 1, entryIndex: 0 }]);
+    expect(sel(hash, [node(5, 1, "choice")])).toEqual([
+      { nodeId: 5, ranks: 1, entryIndex: 0 },
+    ]);
   });
 
   it("decodes a free/granted node (purchased=0)", () => {
-    // selected=1, purchased=0 → free node, push with maxRanks
     const bits = [...header(), 1, 0];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(3, 2)]);
-    expect(result).toEqual([{ nodeId: 3, ranks: 2 }]);
+    expect(sel(hash, [node(3, 2)])).toEqual([{ nodeId: 3, ranks: 2 }]);
   });
 
   it("decodes multiple nodes and skips unselected ones", () => {
-    // nodes 1,2,3 — node 1 not selected, node 2 selected, node 3 selected
-    // node1: selected=0
-    // node2: selected=1, purchased=1, notPartial=0, notChoice=0
-    // node3: selected=1, purchased=1, notPartial=0, isChoice=1, entryIndex=0
+    // node1: not selected; node2: selected; node3: selected choice entry 0
     const bits = [...header(), 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0];
     const hash = encodeBits(bits);
     const nodes = [node(1), node(2), node(3, 1, "choice")];
-    const result = decodeTalentHash(hash, nodes);
-    expect(result).toEqual([
+    expect(sel(hash, nodes)).toEqual([
       { nodeId: 2, ranks: 1 },
       { nodeId: 3, ranks: 1, entryIndex: 0 },
     ]);
   });
 
   it("sorts nodes by ascending id regardless of input order", () => {
-    // Two nodes, id=10 and id=5; 5 should be iterated first
-    // id=5: selected=1, purchased=1, notPartial=0, notChoice=0
-    // id=10: not selected
+    // id=5 selected, id=10 not selected
     const bits = [...header(), 1, 1, 0, 0, 0];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(10), node(5)]); // unsorted input
-    expect(result).toEqual([{ nodeId: 5, ranks: 1 }]);
+    expect(sel(hash, [node(10), node(5)])).toEqual([{ nodeId: 5, ranks: 1 }]);
   });
 
   it("strips base64 padding before decoding", () => {
     const bits = [...header(), 1, 1, 0, 0];
     const hash = encodeBits(bits) + "==";
-    const result = decodeTalentHash(hash, [node(1)]);
-    expect(result).toEqual([{ nodeId: 1, ranks: 1 }]);
+    expect(sel(hash, [node(1)])).toEqual([{ nodeId: 1, ranks: 1 }]);
   });
 
   it("accepts version 2 strings", () => {
     const bits = [...header(2), 1, 1, 0, 0];
     const hash = encodeBits(bits);
-    const result = decodeTalentHash(hash, [node(1)]);
-    expect(result).toEqual([{ nodeId: 1, ranks: 1 }]);
+    expect(sel(hash, [node(1)])).toEqual([{ nodeId: 1, ranks: 1 }]);
   });
 });

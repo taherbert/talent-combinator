@@ -211,12 +211,16 @@ export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
       .filter((stn) => stn.id != null && stn.entries?.length)
       .map((stn) => ({
         id: stn.id,
-        entries: stn.entries.map((e) => ({ traitSubTreeId: e.traitSubTreeId })),
+        // Sort by entry id to match the game's entryIDs ordering
+        entries: [...stn.entries]
+          .sort((a, b) => a.id - b.id)
+          .map((e) => ({ traitSubTreeId: e.traitSubTreeId })),
       }));
 
     return {
       className: raw.className,
       specName: raw.specName,
+      specId: raw.specId,
       classTree: buildTree(raw.classNodes, "class"),
       specTree: buildTree(raw.specNodes, "spec"),
       heroTrees,

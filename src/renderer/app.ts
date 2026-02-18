@@ -4,7 +4,11 @@ import { TalentTreeView } from "./ui/talent-tree";
 import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
 import { countTreeBuilds } from "../shared/build-counter";
-import { decodeTalentHash, type HashSelection } from "./hash-decoder";
+import {
+  decodeTalentHash,
+  type HashDecodeResult,
+  type HashSelection,
+} from "./hash-decoder";
 import type {
   Constraint,
   CountResult,
@@ -424,12 +428,13 @@ state.subscribe((event) => {
 
 function showImportHashDialog(
   nodes: TalentNode[],
-): Promise<HashSelection[] | null> {
+  specId: number | undefined,
+): Promise<HashDecodeResult | null> {
   return new Promise((resolve) => {
     const dialogContainer = document.getElementById("dialog-container")!;
     let resolved = false;
 
-    const finish = (val: HashSelection[] | null): void => {
+    const finish = (val: HashDecodeResult | null): void => {
       if (resolved) return;
       resolved = true;
       overlay.remove();
@@ -493,20 +498,25 @@ function showImportHashDialog(
         errorMsg.style.display = "block";
         return;
       }
-      const selections = decodeTalentHash(val, nodes);
-      if (selections === null) {
+      const result = decodeTalentHash(val, nodes);
+      if (result === null) {
         errorMsg.textContent =
-          "Invalid talent string. Make sure the correct spec is selected and paste the full import string from the game.";
+          "Invalid talent string. Paste the full import string from the game or Wowhead.";
         errorMsg.style.display = "block";
         return;
       }
-      if (selections.length === 0) {
+      if (result.selections.length === 0) {
         errorMsg.textContent =
           "No talents found in this string. Make sure you are importing a build with at least one selected talent.";
         errorMsg.style.display = "block";
         return;
       }
-      finish(selections);
+      if (specId != null && result.specId !== specId) {
+        errorMsg.textContent = `This string is for a different spec (id ${result.specId}). Select the matching spec first, then import.`;
+        errorMsg.style.display = "block";
+        return;
+      }
+      finish(result);
     });
 
     footer.append(cancelBtn, importBtn);
@@ -558,8 +568,9 @@ async function importTalentHash(): Promise<void> {
     ...subTreeStubs,
   ];
 
-  const selections = await showImportHashDialog(allNodes);
-  if (!selections?.length) return;
+  const decoded = await showImportHashDialog(allNodes, spec.specId);
+  if (!decoded?.selections.length) return;
+  const { selections } = decoded;
 
   // Detect hero tree from the subTree selection node's entryIndex, which maps
   // directly to the chosen hero spec via traitSubTreeId.
@@ -666,6 +677,15 @@ headerImportBtn.className = "btn btn-secondary btn-sm";
 headerImportBtn.textContent = "Import Hash";
 headerImportBtn.addEventListener("click", () => void importTalentHash());
 headerActions.appendChild(headerImportBtn);
+
+const headerClearBtn = document.createElement("button");
+headerClearBtn.className = "btn btn-secondary btn-sm";
+headerClearBtn.textContent = "Clear All";
+headerClearBtn.addEventListener("click", () => {
+  const spec = state.activeSpec;
+  if (spec) state.selectSpec(spec);
+});
+headerActions.appendChild(headerClearBtn);
 
 headerEl.appendChild(headerActions);
 

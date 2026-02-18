@@ -44,6 +44,7 @@ export interface RawSubTreeNode {
 export interface RawSpecData {
   className: string;
   specName: string;
+  specId?: number;
   classNodes: RawTalentNode[];
   specNodes: RawTalentNode[];
   heroNodes: RawTalentNode[];
@@ -105,6 +106,7 @@ export interface SubTreeNodeInfo {
 export interface Specialization {
   className: string;
   specName: string;
+  specId?: number;
   classTree: TalentTree;
   specTree: TalentTree;
   heroTrees: TalentTree[];
