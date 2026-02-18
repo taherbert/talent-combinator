@@ -69,10 +69,16 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
 
   normalizeRows(nodes);
 
-  // Supplement reverse edges, filtering references to skipped nodes
+  // Keep only top-down (forward) connections and supplement reverse edges
   for (const node of nodes.values()) {
-    node.next = node.next.filter((id) => nodes.has(id));
-    node.prev = node.prev.filter((id) => nodes.has(id));
+    node.next = node.next.filter((id) => {
+      const n = nodes.get(id);
+      return n && n.row > node.row;
+    });
+    node.prev = node.prev.filter((id) => {
+      const n = nodes.get(id);
+      return n && n.row < node.row;
+    });
     for (const nextId of node.next) {
       const nextNode = nodes.get(nextId);
       if (nextNode && !nextNode.prev.includes(node.id)) {

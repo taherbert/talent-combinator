@@ -1,6 +1,7 @@
 import { state } from "../state";
-import type { SolverResult, Build, TalentTree } from "../../shared/types";
+import type { Build, TalentTree } from "../../shared/types";
 import { MAX_PROFILESETS } from "../../shared/constants";
+import { generateTreeBuilds } from "../../shared/build-counter";
 
 declare const electronAPI: import("../../shared/types").ElectronAPI;
 
@@ -49,11 +50,12 @@ export class ExportPanel {
       const heroTree = state.activeHeroTree;
       if (heroTree) trees.push(heroTree);
 
-      const treeResults = await Promise.all(
-        trees.map((tree) => this.solveTree(tree)),
-      );
       const startTime = performance.now();
-      const output = this.generateProfilesets(treeResults, trees);
+      const allBuilds = trees.map((tree) => {
+        const constraints = state.getConstraintsForTree(tree);
+        return generateTreeBuilds(tree, constraints);
+      });
+      const output = this.generateProfilesets(allBuilds, trees);
       const duration = performance.now() - startTime;
 
       this.showExportDialog(output, duration);
@@ -63,37 +65,10 @@ export class ExportPanel {
     }
   }
 
-  private solveTree(tree: TalentTree): Promise<SolverResult> {
-    return new Promise((resolve) => {
-      const worker = new Worker(
-        new URL("../../worker/solver.worker.ts", import.meta.url),
-        { type: "module" },
-      );
-
-      const constraints = state.getConstraintsForTree(tree);
-
-      worker.postMessage({
-        type: "generate",
-        config: {
-          tree: { ...tree, nodes: Object.fromEntries(tree.nodes) },
-          constraints: Object.fromEntries(constraints),
-        },
-      });
-
-      worker.onmessage = (event) => {
-        if (event.data.type === "generate") {
-          resolve(event.data.result);
-          worker.terminate();
-        }
-      };
-    });
-  }
-
   private generateProfilesets(
-    results: SolverResult[],
+    allBuilds: Build[][],
     trees: TalentTree[],
   ): string {
-    const allBuilds = results.map((r) => r.builds ?? []);
     if (allBuilds.some((b) => b.length === 0)) return "";
 
     const treeTypes = trees.map((t) => TREE_TYPE_NAMES[t.type]);
@@ -136,16 +111,7 @@ export class ExportPanel {
   }
 
   private encodeBuild(build: Build): string {
-    // Entries arrive as plain objects from worker serialization
-    const rawEntries: [number, number][] =
-      build.entries instanceof Map
-        ? Array.from(build.entries.entries())
-        : Object.entries(build.entries).map(([k, v]) => [
-            Number(k),
-            v as number,
-          ]);
-
-    return rawEntries
+    return Array.from(build.entries.entries())
       .filter(([, points]) => points > 0)
       .sort(([a], [b]) => a - b)
       .map(([id, points]) => `${id}:${points}`)

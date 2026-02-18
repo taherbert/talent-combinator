@@ -20,7 +20,6 @@ class AppState {
     heroCount: 0n,
     totalCount: 0n,
   };
-  private _validationErrors: string[] = [];
   private _impliedBy = new Map<number, Set<number>>();
   private _userOwned = new Set<number>();
 
@@ -39,10 +38,6 @@ class AppState {
   get counts(): TreeCounts {
     return this._counts;
   }
-  get validationErrors(): string[] {
-    return this._validationErrors;
-  }
-
   subscribe(listener: Listener): () => void {
     this.listeners.push(listener);
     return () => {
@@ -68,7 +63,6 @@ class AppState {
     this._constraints.clear();
     this._impliedBy.clear();
     this._userOwned.clear();
-    this._validationErrors = [];
     this.emit({ type: "spec-selected", spec });
   }
 
@@ -116,11 +110,6 @@ class AppState {
   updateCounts(counts: TreeCounts): void {
     this._counts = counts;
     this.emit({ type: "count-updated", counts });
-  }
-
-  setValidationErrors(errors: string[]): void {
-    this._validationErrors = errors;
-    this.emit({ type: "validation-errors", errors });
   }
 
   setImpliedConstraints(sourceId: number, impliedIds: number[]): void {

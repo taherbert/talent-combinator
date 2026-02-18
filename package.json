@@ -7,18 +7,20 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "test": "vitest run",
+    "test": "vitest run --exclude test/integration",
+    "test:integration": "vitest run test/integration",
+    "test:all": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "package": "electron-vite build && electron-builder"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
     "electron": "^33.0.0",
-    "electron-vite": "^5.0.0",
     "electron-builder": "^25.0.0",
+    "electron-vite": "^5.0.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
-    "vitest": "^3.0.0",
-    "@playwright/test": "^1.50.0"
+    "vitest": "^3.0.0"
   }
 }

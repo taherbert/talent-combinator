@@ -3,16 +3,15 @@ import { ClassPicker } from "./ui/class-picker";
 import { TalentTreeView } from "./ui/talent-tree";
 import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
+import { countTreeBuilds } from "../shared/build-counter";
 import type {
-  Constraint,
+  CountResult,
   Specialization,
   TalentNode,
   TalentTree,
-  TreeCountDetail,
   Loadout,
 } from "../shared/types";
 import { SOLVER_DEBOUNCE_MS } from "../shared/constants";
-import { validateTree } from "../shared/validation";
 
 declare const electronAPI: import("../shared/types").ElectronAPI;
 
@@ -30,10 +29,10 @@ void new ExportPanel(counterBar);
 
 let countDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 type CountKey = "classCount" | "specCount" | "heroCount";
-const cachedDetails: Record<CountKey, TreeCountDetail> = {
-  classCount: { count: 1n, durationMs: 0 },
-  specCount: { count: 1n, durationMs: 0 },
-  heroCount: { count: 1n, durationMs: 0 },
+const cachedDetails: Record<CountKey, CountResult> = {
+  classCount: { count: 1n, durationMs: 0, warnings: [] },
+  specCount: { count: 1n, durationMs: 0, warnings: [] },
+  heroCount: { count: 1n, durationMs: 0, warnings: [] },
 };
 const dirtyTrees = new Set<CountKey>();
 
@@ -224,27 +223,6 @@ function renderTrees(
   scheduleCount();
 }
 
-function runValidation(): void {
-  const spec = state.activeSpec;
-  if (!spec) return;
-
-  const errors: string[] = [];
-  const trees = [spec.classTree, spec.specTree];
-  const heroTree = state.activeHeroTree;
-  if (heroTree) trees.push(heroTree);
-
-  for (const tree of trees) {
-    const treeConstraints = state.getConstraintsForTree(tree);
-    const treeErrors = validateTree(tree, treeConstraints);
-    const label = tree.type.charAt(0).toUpperCase() + tree.type.slice(1);
-    for (const err of treeErrors) {
-      errors.push(`${label}: ${err.message}`);
-    }
-  }
-
-  state.setValidationErrors(errors);
-}
-
 // --- Counting ---
 
 function detectTreeKey(nodeId: number): CountKey | null {
@@ -286,58 +264,9 @@ function publishCounts(): void {
   });
 }
 
-let countWorkers: Worker[] = [];
-let countGeneration = 0;
-
-function countTreeInWorker(
-  tree: TalentTree,
-  constraints: Map<number, Constraint>,
-): { worker: Worker; promise: Promise<TreeCountDetail> } {
-  const worker = new Worker(
-    new URL("../worker/solver.worker.ts", import.meta.url),
-    { type: "module" },
-  );
-
-  const promise = new Promise<TreeCountDetail>((resolve) => {
-    worker.onmessage = (event) => {
-      const data = event.data;
-      if (data.type === "count") {
-        resolve({
-          count: BigInt(data.result.count),
-          durationMs: data.result.durationMs,
-        });
-        worker.terminate();
-      } else if (data.type === "error") {
-        console.error("Solver error:", data.message);
-        resolve({ count: 0n, durationMs: 0 });
-        worker.terminate();
-      }
-    };
-    worker.onerror = () => {
-      resolve({ count: 0n, durationMs: 0 });
-      worker.terminate();
-    };
-  });
-
-  worker.postMessage({
-    type: "count",
-    config: {
-      tree: { ...tree, nodes: Object.fromEntries(tree.nodes) },
-      constraints: Object.fromEntries(constraints),
-    },
-  });
-
-  return { worker, promise };
-}
-
-async function runCount(): Promise<void> {
+function runCount(): void {
   const spec = state.activeSpec;
   if (!spec) return;
-
-  // Cancel any in-progress counting
-  for (const w of countWorkers) w.terminate();
-  countWorkers = [];
-  const generation = ++countGeneration;
 
   const allTrees: { tree: TalentTree; key: CountKey }[] = [
     { tree: spec.classTree, key: "classCount" },
@@ -354,24 +283,14 @@ async function runCount(): Promise<void> {
 
   if (treesToCount.length === 0) return;
 
-  const jobs = treesToCount.map(({ tree, key }) => {
+  for (const { tree, key } of treesToCount) {
     const constraints = state.getConstraintsForTree(tree);
-    const { worker, promise } = countTreeInWorker(tree, constraints);
-    return { key, worker, promise };
-  });
-
-  countWorkers = jobs.map((j) => j.worker);
-
-  const results = await Promise.all(
-    jobs.map(async (j) => ({ key: j.key, detail: await j.promise })),
-  );
-
-  // Discard stale results if a newer count was started
-  if (generation !== countGeneration) return;
-
-  countWorkers = [];
-  for (const { key, detail } of results) {
-    cachedDetails[key] = detail;
+    try {
+      cachedDetails[key] = countTreeBuilds(tree, constraints);
+    } catch (err) {
+      console.error(`[count] ${key} failed:`, err);
+      cachedDetails[key] = { count: 0n, durationMs: 0, warnings: [] };
+    }
   }
   publishCounts();
 }
@@ -453,7 +372,6 @@ function autoSelectHeroNodes(tree: TalentTree): void {
     state.setImpliedConstraints(node.id, implied);
   }
 
-  runValidation();
   scheduleCount("heroCount");
 }
 
@@ -475,8 +393,8 @@ state.subscribe((event) => {
     case "hero-tree-selected": {
       const spec = state.activeSpec;
       if (spec) {
-        renderTrees(spec.classTree, spec.specTree, event.tree);
         autoSelectHeroNodes(event.tree);
+        renderTrees(spec.classTree, spec.specTree, event.tree);
       }
       break;
     }
@@ -491,7 +409,6 @@ state.subscribe((event) => {
       const tree = findTreeForNode(nodeId);
       if (tree) recomputeImpliedForTree(tree);
 
-      runValidation();
       if (key) scheduleCount(key);
       break;
     }
@@ -499,7 +416,6 @@ state.subscribe((event) => {
       const tree = findTreeForNode(event.nodeId);
       if (tree) recomputeImpliedForTree(tree);
 
-      runValidation();
       const key = detectTreeKey(event.nodeId);
       if (key) scheduleCount(key);
       break;
