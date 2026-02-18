@@ -4,7 +4,9 @@ import { TalentTreeView } from "./ui/talent-tree";
 import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
 import { countTreeBuilds } from "../shared/build-counter";
+import { decodeTalentHash, type HashSelection } from "./hash-decoder";
 import type {
+  Constraint,
   CountResult,
   Specialization,
   TalentNode,
@@ -418,6 +420,155 @@ state.subscribe((event) => {
   }
 });
 
+// --- Import talent hash ---
+
+function showImportHashDialog(
+  nodes: TalentNode[],
+): Promise<HashSelection[] | null> {
+  return new Promise((resolve) => {
+    const dialogContainer = document.getElementById("dialog-container")!;
+    let resolved = false;
+
+    const finish = (val: HashSelection[] | null): void => {
+      if (resolved) return;
+      resolved = true;
+      overlay.remove();
+      resolve(val);
+    };
+
+    const overlay = document.createElement("div");
+    overlay.className = "export-dialog";
+
+    const content = document.createElement("div");
+    content.className = "export-dialog-content";
+    content.style.cssText = "width: 500px; max-height: 60vh;";
+
+    const dialogHeader = document.createElement("div");
+    dialogHeader.className = "export-dialog-header";
+    const title = document.createElement("h2");
+    title.textContent = "Import Talent Hash";
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "btn btn-secondary";
+    closeBtn.textContent = "×";
+    closeBtn.addEventListener("click", () => finish(null));
+    dialogHeader.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "export-dialog-body";
+
+    const label = document.createElement("p");
+    label.textContent =
+      "Paste a WoW talent import string. All selected talents will be added as must-have constraints.";
+    label.style.cssText =
+      "margin-bottom: 12px; color: var(--text-muted); font-size: 12px;";
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "export-output";
+    textarea.style.cssText = "min-height: 80px; resize: vertical;";
+    textarea.placeholder = "BQEAAAAAAAAAAAAAAAAAAAAFBg...";
+
+    const errorMsg = document.createElement("p");
+    errorMsg.style.cssText =
+      "color: var(--color-red, #e74c3c); font-size: 12px; margin-top: 8px; display: none;";
+
+    body.append(label, textarea, errorMsg);
+
+    const footer = document.createElement("div");
+    footer.className = "export-dialog-footer";
+    footer.style.cssText =
+      "display: flex; justify-content: flex-end; gap: 8px;";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn btn-secondary";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => finish(null));
+
+    const importBtn = document.createElement("button");
+    importBtn.className = "btn btn-primary";
+    importBtn.textContent = "Import";
+    importBtn.addEventListener("click", () => {
+      const val = textarea.value.trim();
+      if (!val) {
+        errorMsg.textContent = "Please paste a talent string.";
+        errorMsg.style.display = "block";
+        return;
+      }
+      const selections = decodeTalentHash(val, nodes);
+      if (selections === null) {
+        errorMsg.textContent =
+          "Invalid talent string. Make sure the correct spec is selected and paste the full import string from the game.";
+        errorMsg.style.display = "block";
+        return;
+      }
+      if (selections.length === 0) {
+        errorMsg.textContent =
+          "No talents found in this string. Make sure you are importing a build with at least one selected talent.";
+        errorMsg.style.display = "block";
+        return;
+      }
+      finish(selections);
+    });
+
+    footer.append(cancelBtn, importBtn);
+
+    content.append(dialogHeader, body, footer);
+    overlay.appendChild(content);
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) finish(null);
+    });
+
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") finish(null);
+    });
+
+    dialogContainer.appendChild(overlay);
+    textarea.focus();
+  });
+}
+
+async function importTalentHash(): Promise<void> {
+  const spec = state.activeSpec;
+  if (!spec) return;
+
+  const allNodes: TalentNode[] = [
+    ...spec.classTree.nodes.values(),
+    ...spec.specTree.nodes.values(),
+    ...spec.heroTrees.flatMap((t) => [...t.nodes.values()]),
+  ];
+
+  const selections = await showImportHashDialog(allNodes);
+  if (!selections?.length) return;
+
+  // Detect which hero tree is implied by the selected nodes
+  const selectedIds = new Set(selections.map((s) => s.nodeId));
+  const detectedHeroTree =
+    spec.heroTrees.find((ht) =>
+      [...ht.nodes.keys()].some((id) => selectedIds.has(id)),
+    ) ?? null;
+
+  // Reset spec state (clears constraints, auto-selects first hero tree)
+  state.selectSpec(spec);
+
+  // Switch to the detected hero tree if different from the auto-selected one
+  if (detectedHeroTree && detectedHeroTree !== state.activeHeroTree) {
+    state.selectHeroTree(detectedHeroTree);
+  }
+
+  const knownIds = new Set(allNodes.map((n) => n.id));
+
+  for (const sel of selections) {
+    if (!knownIds.has(sel.nodeId)) continue;
+
+    const constraint: Constraint = {
+      nodeId: sel.nodeId,
+      type: "always",
+      entryIndex: sel.entryIndex,
+    };
+    state.setConstraint(constraint);
+  }
+}
+
 // --- Save/Load ---
 
 async function saveLoadout(): Promise<void> {
@@ -461,7 +612,7 @@ async function loadLoadout(): Promise<void> {
   }
 }
 
-// Header save/load buttons
+// Header save/load/import buttons
 const headerActions = document.createElement("div");
 headerActions.className = "header-actions";
 
@@ -476,6 +627,12 @@ headerSaveBtn.className = "btn btn-secondary btn-sm";
 headerSaveBtn.textContent = "Save";
 headerSaveBtn.addEventListener("click", saveLoadout);
 headerActions.appendChild(headerSaveBtn);
+
+const headerImportBtn = document.createElement("button");
+headerImportBtn.className = "btn btn-secondary btn-sm";
+headerImportBtn.textContent = "Import Hash";
+headerImportBtn.addEventListener("click", () => void importTalentHash());
+headerActions.appendChild(headerImportBtn);
 
 headerEl.appendChild(headerActions);
 
