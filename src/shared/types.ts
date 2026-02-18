@@ -111,6 +111,9 @@ export interface Specialization {
   specTree: TalentTree;
   heroTrees: TalentTree[];
   subTreeNodes: SubTreeNodeInfo[];
+  // Node IDs excluded from the talent tree display (entryNode/freeNode with no name)
+  // but still present in the game's GetTreeNodes hash encoding.
+  systemNodeIds: number[];
 }
 
 // --- Constraint types ---

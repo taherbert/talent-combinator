@@ -541,40 +541,55 @@ async function importTalentHash(): Promise<void> {
   const spec = state.activeSpec;
   if (!spec) return;
 
-  // The game encodes subTreeNodes (hero-tree selection nodes) in the bit
-  // stream alongside regular talent nodes, sorted by nodeId. We must include
-  // them so subsequent node bits are read at the correct positions.
-  const subTreeStubs: TalentNode[] = spec.subTreeNodes.map((stn) => ({
-    id: stn.id,
-    name: "",
-    icon: "",
-    type: "choice" as const,
-    maxRanks: 1,
-    entries: [],
-    next: [],
-    prev: [],
-    reqPoints: 0,
-    row: 0,
-    col: 0,
-    freeNode: false,
-    entryNode: false,
-    isApex: false,
-  }));
+  // The hash encodes class + spec nodes + subTreeNode (hero-tree choice), sorted
+  // by nodeId. Hero tree nodes are NOT in the hash — the game stores them
+  // separately. Including hero nodes corrupts the decode because their IDs
+  // interleave with spec IDs.
+  //
+  // We also include stubs for system nodes (entryNode/freeNode with no name)
+  // that are excluded from the display tree but present in GetTreeNodes.
+  function makeStub(id: number): TalentNode {
+    return {
+      id,
+      name: "",
+      icon: "",
+      type: "single" as const,
+      maxRanks: 1,
+      entries: [],
+      next: [],
+      prev: [],
+      reqPoints: 0,
+      row: 0,
+      col: 0,
+      freeNode: true,
+      entryNode: true,
+      isApex: false,
+    };
+  }
+
+  const subTreeStubs: TalentNode[] = spec.subTreeNodes.map((stn) =>
+    makeStub(stn.id),
+  );
+  const systemStubs: TalentNode[] = spec.systemNodeIds.map(makeStub);
 
   const allNodes: TalentNode[] = [
     ...spec.classTree.nodes.values(),
     ...spec.specTree.nodes.values(),
-    ...spec.heroTrees.flatMap((t) => [...t.nodes.values()]),
     ...subTreeStubs,
+    ...systemStubs,
   ];
 
   const decoded = await showImportHashDialog(allNodes, spec.specId);
   if (!decoded?.selections.length) return;
   const { selections } = decoded;
 
-  // Detect hero tree from the subTree selection node's entryIndex, which maps
-  // directly to the chosen hero spec via traitSubTreeId.
-  const subTreeNodeIds = new Set(spec.subTreeNodes.map((s) => s.id));
+  // Nodes that should not become user constraints: subTree nodes and system stubs
+  const nonTalentIds = new Set([
+    ...spec.subTreeNodes.map((s) => s.id),
+    ...spec.systemNodeIds,
+  ]);
+
+  // Detect hero tree from the subTreeNode's entryIndex
   let detectedHeroTree: TalentTree | null = null;
   for (const sel of selections) {
     const stn = spec.subTreeNodes.find((s) => s.id === sel.nodeId);
@@ -596,13 +611,9 @@ async function importTalentHash(): Promise<void> {
     state.selectHeroTree(detectedHeroTree);
   }
 
-  // Apply talent constraints — skip subTree selection nodes
-  const talentNodeIds = new Set(
-    allNodes.filter((n) => !subTreeNodeIds.has(n.id)).map((n) => n.id),
-  );
-
+  // Apply always constraints for selected class/spec talent nodes
   for (const sel of selections) {
-    if (!talentNodeIds.has(sel.nodeId)) continue;
+    if (nonTalentIds.has(sel.nodeId)) continue;
 
     const constraint: Constraint = {
       nodeId: sel.nodeId,

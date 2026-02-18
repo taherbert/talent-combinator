@@ -211,11 +211,21 @@ export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
       .filter((stn) => stn.id != null && stn.entries?.length)
       .map((stn) => ({
         id: stn.id,
-        // Sort by entry id to match the game's entryIDs ordering
+        // Descending by entry id matches the game's entryIDs ordering
         entries: [...stn.entries]
-          .sort((a, b) => a.id - b.id)
+          .sort((a, b) => b.id - a.id)
           .map((e) => ({ traitSubTreeId: e.traitSubTreeId })),
       }));
+
+    // Collect node IDs that fail isValidNode (entryNode/freeNode with no name/entries)
+    // but are still present in the game's GetTreeNodes hash encoding.
+    const systemNodeIds: number[] = [
+      ...raw.classNodes,
+      ...raw.specNodes,
+      ...raw.heroNodes,
+    ]
+      .filter((n) => !isValidNode(n) && n.id != null)
+      .map((n) => n.id);
 
     return {
       className: raw.className,
@@ -225,6 +235,7 @@ export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
       specTree: buildTree(raw.specNodes, "spec"),
       heroTrees,
       subTreeNodes,
+      systemNodeIds,
     };
   });
 }
