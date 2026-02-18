@@ -207,6 +207,17 @@
   display: none;
 }
 
+.tree-constraint-summary:empty {
+  display: none;
+}
+
+.tree-constraint-summary {
+  text-align: center;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .tree-svg-container {
   padding: 8px;
   overflow: auto;

@@ -463,6 +463,12 @@
   line-height: 1.6;
 }
 
+.validation-warning-line {
+  font-size: 11px;
+  color: var(--color-yellow);
+  line-height: 1.6;
+}
+
 /* Export panel */
 .export-actions {
   display: flex;

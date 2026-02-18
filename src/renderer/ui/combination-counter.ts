@@ -1,11 +1,24 @@
 import { state } from "../state";
-import type { TalentTree, TreeCounts } from "../../shared/types";
+import type { TreeCounts, CountResult, CountWarning } from "../../shared/types";
 import { MAX_PROFILESETS, COUNT_THRESHOLDS } from "../../shared/constants";
-import { diagnoseZeroBuilds } from "../../shared/validation";
 
 const MAX_PROFILESETS_BIG = BigInt(MAX_PROFILESETS);
 const GREEN_THRESHOLD_BIG = BigInt(COUNT_THRESHOLDS.green);
-const NO_BUILDS_MSG = "No valid builds — check constraints";
+
+const MAGNITUDE_LABELS: [bigint, string][] = [
+  [1_000_000_000_000_000n, "Quadrillions"],
+  [1_000_000_000_000n, "Trillions"],
+  [1_000_000_000n, "Billions"],
+  [1_000_000n, "Millions"],
+  [100_000n, "Thousands"],
+];
+
+function formatCount(n: bigint): string {
+  for (const [threshold, label] of MAGNITUDE_LABELS) {
+    if (n >= threshold) return `${label} of builds`;
+  }
+  return n.toLocaleString();
+}
 
 export class CombinationCounter {
   private el: HTMLElement;
@@ -18,7 +31,7 @@ export class CombinationCounter {
   constructor(container: HTMLElement) {
     this.el = container;
 
-    // Validation errors — full-width centered banner
+    // Warnings banner — full-width centered
     this.errorsEl = document.createElement("div");
     this.errorsEl.className = "validation-errors";
     this.el.appendChild(this.errorsEl);
@@ -45,42 +58,30 @@ export class CombinationCounter {
 
     this.el.appendChild(countDisplay);
 
-    this.countEl.textContent = "";
-    this.breakdownEl.textContent = "";
-    this.warningEl.textContent = "";
-    this.timingEl.textContent = "";
-
     state.subscribe((event) => {
       if (event.type === "count-updated") {
         this.update(event.counts);
       }
-      if (event.type === "validation-errors") {
-        this.showErrors(event.errors);
-      }
     });
-  }
-
-  private showErrors(errors: string[]): void {
-    this.errorsEl.innerHTML = "";
-    if (errors.length === 0) return;
-
-    for (const msg of errors) {
-      const line = document.createElement("div");
-      line.className = "validation-error-line";
-      line.textContent = msg;
-      this.errorsEl.appendChild(line);
-    }
   }
 
   private update(counts: TreeCounts): void {
     const total = counts.totalCount;
 
-    this.countEl.textContent = total.toLocaleString();
+    this.countEl.textContent = formatCount(total);
     this.countEl.className = "count-value";
+
+    // Collect warnings from all tree details
+    const warnings = this.collectWarnings(counts);
+    this.showWarnings(warnings);
 
     if (total === 0n) {
       this.countEl.classList.add("red");
-      this.warningEl.textContent = this.diagnose(counts);
+      if (warnings.length === 0) {
+        this.warningEl.textContent = "No valid builds — check constraints";
+      } else {
+        this.warningEl.textContent = "";
+      }
     } else if (total > MAX_PROFILESETS_BIG) {
       this.countEl.classList.add("red");
       this.warningEl.textContent = `Exceeds Raidbots limit of ${MAX_PROFILESETS.toLocaleString()}. Add more constraints.`;
@@ -94,10 +95,10 @@ export class CombinationCounter {
 
     // Per-tree breakdown
     const parts: string[] = [];
-    parts.push(`Class: ${counts.classCount.toLocaleString()}`);
-    parts.push(`Spec: ${counts.specCount.toLocaleString()}`);
+    parts.push(`Class: ${formatCount(counts.classCount)}`);
+    parts.push(`Spec: ${formatCount(counts.specCount)}`);
     if (counts.heroCount > 0n || state.activeHeroTree) {
-      parts.push(`Hero: ${counts.heroCount.toLocaleString()}`);
+      parts.push(`Hero: ${formatCount(counts.heroCount)}`);
     }
     this.breakdownEl.textContent = parts.join(" \u00d7 ");
 
@@ -117,27 +118,39 @@ export class CombinationCounter {
     }
   }
 
-  private diagnose(counts: TreeCounts): string {
-    const spec = state.activeSpec;
-    if (!spec) return NO_BUILDS_MSG;
+  private collectWarnings(counts: TreeCounts): CountWarning[] {
+    const details = counts.details;
+    if (!details) return [];
 
-    const trees: { tree: TalentTree; count: bigint; label: string }[] = [
-      { tree: spec.classTree, count: counts.classCount, label: "Class" },
-      { tree: spec.specTree, count: counts.specCount, label: "Spec" },
+    const warnings: CountWarning[] = [];
+    const entries: [string, CountResult | undefined][] = [
+      ["Class", details.class],
+      ["Spec", details.spec],
+      ["Hero", details.hero],
     ];
-    const heroTree = state.activeHeroTree;
-    if (heroTree) {
-      trees.push({ tree: heroTree, count: counts.heroCount, label: "Hero" });
+
+    for (const [label, detail] of entries) {
+      if (!detail) continue;
+      for (const w of detail.warnings) {
+        warnings.push({ ...w, message: `${label}: ${w.message}` });
+      }
     }
 
-    const messages: string[] = [];
-    for (const { tree, count, label } of trees) {
-      if (count !== 0n) continue;
-      const constraints = state.getConstraintsForTree(tree);
-      const diag = diagnoseZeroBuilds(tree, constraints);
-      if (diag) messages.push(`${label}: ${diag.message}`);
-    }
+    return warnings;
+  }
 
-    return messages.length > 0 ? messages.join(" | ") : NO_BUILDS_MSG;
+  private showWarnings(warnings: CountWarning[]): void {
+    this.errorsEl.innerHTML = "";
+    if (warnings.length === 0) return;
+
+    for (const w of warnings) {
+      const line = document.createElement("div");
+      line.className =
+        w.severity === "error"
+          ? "validation-error-line"
+          : "validation-warning-line";
+      line.textContent = w.message;
+      this.errorsEl.appendChild(line);
+    }
   }
 }

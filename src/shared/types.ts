@@ -147,14 +147,27 @@ export interface Build {
   entries: Map<number, number>; // entryId → points
 }
 
+// --- Count result types ---
+
+export type CountWarningSeverity = "error" | "warning";
+
+export interface CountWarning {
+  severity: CountWarningSeverity;
+  message: string;
+  nodeIds?: number[];
+}
+
+export interface CountResult {
+  count: bigint;
+  durationMs: number;
+  warnings: CountWarning[];
+}
+
 // --- Worker messages ---
 
-export type WorkerRequest =
-  | { type: "count"; config: SolverConfig }
-  | { type: "generate"; config: SolverConfig };
+export type WorkerRequest = { type: "generate"; config: SolverConfig };
 
 export type WorkerResponse =
-  | { type: "count"; result: { count: string; durationMs: number } }
   | { type: "generate"; result: SolverResult }
   | { type: "progress"; current: number; total: number }
   | { type: "error"; message: string };
@@ -197,14 +210,8 @@ export type AppEvent =
   | { type: "constraint-changed"; constraint: Constraint }
   | { type: "constraint-removed"; nodeId: number }
   | { type: "count-updated"; counts: TreeCounts }
-  | { type: "validation-errors"; errors: string[] }
   | { type: "generation-complete"; result: SolverResult }
   | { type: "data-loaded"; data: TalentDataResult };
-
-export interface TreeCountDetail {
-  count: bigint;
-  durationMs: number;
-}
 
 export interface TreeCounts {
   classCount: bigint;
@@ -212,8 +219,8 @@ export interface TreeCounts {
   heroCount: bigint;
   totalCount: bigint;
   details?: {
-    class?: TreeCountDetail;
-    spec?: TreeCountDetail;
-    hero?: TreeCountDetail;
+    class?: CountResult;
+    spec?: CountResult;
+    hero?: CountResult;
   };
 }

@@ -15,6 +15,7 @@ import {
   NODE_GAP_Y,
   TREE_PADDING,
 } from "../../shared/constants";
+import { computeReachable } from "../../shared/build-counter";
 
 declare const electronAPI: import("../../shared/types").ElectronAPI;
 
@@ -28,6 +29,7 @@ export class TalentTreeView {
   private tree: TalentTree | null = null;
   private conditionEditor: ConditionEditor;
   private tooltipEl: HTMLElement;
+  private summaryEl: HTMLElement | null = null;
   private rankPopover: HTMLElement | null = null;
   private hoveredNode: TalentNode | null = null;
   private lastHoverEvent: MouseEvent | null = null;
@@ -44,6 +46,7 @@ export class TalentTreeView {
       ) {
         this.updateNodeStates();
         this.updateConnectors();
+        this.updateConstraintSummary();
         // Refresh tooltip if hovering over a node
         if (this.hoveredNode && this.lastHoverEvent) {
           this.renderTooltip(this.hoveredNode, this.lastHoverEvent);
@@ -61,13 +64,18 @@ export class TalentTreeView {
     const section = document.createElement("div");
     section.className = "tree-section";
 
-    // Header — just the tree name
+    // Header (hidden by CSS, kept for structure)
     const header = document.createElement("div");
     header.className = "tree-section-header";
     const titleSpan = document.createElement("span");
     titleSpan.textContent = tree.subTreeName ?? `${tree.type} talents`;
     header.appendChild(titleSpan);
     section.appendChild(header);
+
+    // Constraint summary bar
+    this.summaryEl = document.createElement("div");
+    this.summaryEl.className = "tree-constraint-summary";
+    section.appendChild(this.summaryEl);
 
     const svgContainer = document.createElement("div");
     svgContainer.className = "tree-svg-container";
@@ -177,6 +185,7 @@ export class TalentTreeView {
 
     this.updateNodeStates();
     this.updateConnectors();
+    this.updateConstraintSummary();
   }
 
   private handleClick(node: TalentNode, event: MouseEvent): void {
@@ -194,6 +203,9 @@ export class TalentTreeView {
     // Simple single-rank nodes: click-to-cycle
     const current = state.constraints.get(node.id);
     if (!current) {
+      state.setConstraint({ nodeId: node.id, type: "always" });
+    } else if (current.type === "always" && state.isImplied(node.id)) {
+      // Promote implied to explicit always
       state.setConstraint({ nodeId: node.id, type: "always" });
     } else if (current.type === "always") {
       state.setConstraint({ nodeId: node.id, type: "never" });
@@ -497,6 +509,12 @@ export class TalentTreeView {
   private updateConnectors(): void {
     if (!this.tree) return;
 
+    const neverNodes = new Set<number>();
+    for (const [nodeId, constraint] of state.constraints) {
+      if (constraint.type === "never") neverNodes.add(nodeId);
+    }
+    const reachable = computeReachable(this.tree, neverNodes);
+
     for (const [key, line] of this.connectors) {
       const [fromIdStr, toIdStr] = key.split("-");
       const fromId = Number(fromIdStr);
@@ -506,21 +524,39 @@ export class TalentTreeView {
 
       line.classList.remove("active", "possible", "impossible");
 
-      const fromNever = fromConstraint?.type === "never";
-      const toNever = toConstraint?.type === "never";
-      const fromAlways = fromConstraint?.type === "always";
-      const toAlways = toConstraint?.type === "always";
+      const fromReachable = reachable.has(fromId);
+      const toReachable = reachable.has(toId);
 
-      if (fromNever || toNever) {
+      if (!fromReachable || !toReachable) {
         line.classList.add("impossible");
-      } else if (fromAlways && toAlways) {
-        // Both ends forced (includes implied) — solid active path
-        line.classList.add("possible");
-      } else if (fromAlways) {
+      } else if (fromConstraint?.type === "always") {
         line.classList.add("possible");
       } else if (fromConstraint || toConstraint) {
         line.classList.add("active");
       }
     }
+  }
+
+  private updateConstraintSummary(): void {
+    if (!this.tree || !this.summaryEl) return;
+
+    let always = 0;
+    let never = 0;
+    let conditional = 0;
+
+    for (const node of this.tree.nodes.values()) {
+      const constraint = state.constraints.get(node.id);
+      if (!constraint) continue;
+      if (constraint.type === "always") always++;
+      else if (constraint.type === "never") never++;
+      else if (constraint.type === "conditional") conditional++;
+    }
+
+    const parts: string[] = [];
+    if (always > 0) parts.push(`${always} required`);
+    if (never > 0) parts.push(`${never} blocked`);
+    if (conditional > 0) parts.push(`${conditional} conditional`);
+
+    this.summaryEl.textContent = parts.length > 0 ? parts.join(", ") : "";
   }
 }
