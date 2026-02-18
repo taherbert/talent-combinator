@@ -95,12 +95,20 @@ export interface TalentTree {
   subTreeName?: string;
 }
 
+// Hero tree selection node — the "choice" node where you pick a hero spec.
+// Needed to correctly position bits when decoding a talent import string.
+export interface SubTreeNodeInfo {
+  id: number;
+  entries: { traitSubTreeId: number }[];
+}
+
 export interface Specialization {
   className: string;
   specName: string;
   classTree: TalentTree;
   specTree: TalentTree;
   heroTrees: TalentTree[];
+  subTreeNodes: SubTreeNodeInfo[];
 }
 
 // --- Constraint types ---

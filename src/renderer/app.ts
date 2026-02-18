@@ -531,21 +531,51 @@ async function importTalentHash(): Promise<void> {
   const spec = state.activeSpec;
   if (!spec) return;
 
+  // The game encodes subTreeNodes (hero-tree selection nodes) in the bit
+  // stream alongside regular talent nodes, sorted by nodeId. We must include
+  // them so subsequent node bits are read at the correct positions.
+  const subTreeStubs: TalentNode[] = spec.subTreeNodes.map((stn) => ({
+    id: stn.id,
+    name: "",
+    icon: "",
+    type: "choice" as const,
+    maxRanks: 1,
+    entries: [],
+    next: [],
+    prev: [],
+    reqPoints: 0,
+    row: 0,
+    col: 0,
+    freeNode: false,
+    entryNode: false,
+    isApex: false,
+  }));
+
   const allNodes: TalentNode[] = [
     ...spec.classTree.nodes.values(),
     ...spec.specTree.nodes.values(),
     ...spec.heroTrees.flatMap((t) => [...t.nodes.values()]),
+    ...subTreeStubs,
   ];
 
   const selections = await showImportHashDialog(allNodes);
   if (!selections?.length) return;
 
-  // Detect which hero tree is implied by the selected nodes
-  const selectedIds = new Set(selections.map((s) => s.nodeId));
-  const detectedHeroTree =
-    spec.heroTrees.find((ht) =>
-      [...ht.nodes.keys()].some((id) => selectedIds.has(id)),
-    ) ?? null;
+  // Detect hero tree from the subTree selection node's entryIndex, which maps
+  // directly to the chosen hero spec via traitSubTreeId.
+  const subTreeNodeIds = new Set(spec.subTreeNodes.map((s) => s.id));
+  let detectedHeroTree: TalentTree | null = null;
+  for (const sel of selections) {
+    const stn = spec.subTreeNodes.find((s) => s.id === sel.nodeId);
+    if (stn && sel.entryIndex !== undefined) {
+      const traitSubTreeId = stn.entries[sel.entryIndex]?.traitSubTreeId;
+      if (traitSubTreeId != null) {
+        detectedHeroTree =
+          spec.heroTrees.find((ht) => ht.subTreeId === traitSubTreeId) ?? null;
+        break;
+      }
+    }
+  }
 
   // Reset spec state (clears constraints, auto-selects first hero tree)
   state.selectSpec(spec);
@@ -555,10 +585,13 @@ async function importTalentHash(): Promise<void> {
     state.selectHeroTree(detectedHeroTree);
   }
 
-  const knownIds = new Set(allNodes.map((n) => n.id));
+  // Apply talent constraints — skip subTree selection nodes
+  const talentNodeIds = new Set(
+    allNodes.filter((n) => !subTreeNodeIds.has(n.id)).map((n) => n.id),
+  );
 
   for (const sel of selections) {
-    if (!knownIds.has(sel.nodeId)) continue;
+    if (!talentNodeIds.has(sel.nodeId)) continue;
 
     const constraint: Constraint = {
       nodeId: sel.nodeId,

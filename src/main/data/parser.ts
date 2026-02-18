@@ -2,6 +2,7 @@ import type {
   RawSpecData,
   RawTalentNode,
   Specialization,
+  SubTreeNodeInfo,
   TalentEntry,
   TalentNode,
   TalentTree,
@@ -206,12 +207,20 @@ export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
       buildTree(nodes, "hero", stId, heroNameMap.get(stId)),
     );
 
+    const subTreeNodes: SubTreeNodeInfo[] = (raw.subTreeNodes ?? [])
+      .filter((stn) => stn.id != null && stn.entries?.length)
+      .map((stn) => ({
+        id: stn.id,
+        entries: stn.entries.map((e) => ({ traitSubTreeId: e.traitSubTreeId })),
+      }));
+
     return {
       className: raw.className,
       specName: raw.specName,
       classTree: buildTree(raw.classNodes, "class"),
       specTree: buildTree(raw.specNodes, "spec"),
       heroTrees,
+      subTreeNodes,
     };
   });
 }
