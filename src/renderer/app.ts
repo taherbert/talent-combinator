@@ -362,16 +362,11 @@ function autoSelectHeroNodes(tree: TalentTree): void {
   }
   if (toSelect.length === 0) return;
 
-  // Batch: set constraints and compute implied predecessors without
-  // emitting individual events (avoids N separate validations).
+  // No implied-predecessor computation needed: every non-choice node is
+  // explicitly user-owned, so there are no gaps to infer.
   for (const node of toSelect) {
     state.setConstraintQuiet({ nodeId: node.id, type: "always" });
   }
-  for (const node of toSelect) {
-    const implied = computeImpliedPredecessors(node.id, tree);
-    state.setImpliedConstraints(node.id, implied);
-  }
-
   scheduleCount("heroCount");
 }
 
