@@ -541,13 +541,11 @@ async function importTalentHash(): Promise<void> {
   const spec = state.activeSpec;
   if (!spec) return;
 
-  // The hash encodes class + spec nodes + subTreeNode (hero-tree choice), sorted
-  // by nodeId. Hero tree nodes are NOT in the hash — the game stores them
-  // separately. Including hero nodes corrupts the decode because their IDs
-  // interleave with spec IDs.
-  //
-  // We also include stubs for system nodes (entryNode/freeNode with no name)
-  // that are excluded from the display tree but present in GetTreeNodes.
+  // The hash encodes ALL nodes the game returns from C_Traits.GetTreeNodes —
+  // class nodes, every spec's spec/hero nodes (including other specs of the
+  // same class), and subTree selection nodes. Nodes from other specs are
+  // always encoded as unselected (0), but still consume 1 bit each. Missing
+  // them causes cascading misalignment for all higher-ID nodes.
   function makeStub(id: number): TalentNode {
     return {
       id,
@@ -567,32 +565,47 @@ async function importTalentHash(): Promise<void> {
     };
   }
 
-  const subTreeStubs: TalentNode[] = spec.subTreeNodes.map((stn) =>
-    makeStub(stn.id),
+  // Include every spec of the same class (deduped by nodeId) for correct
+  // bit positioning when decoding.
+  const sameClassSpecs = state.specs.filter(
+    (s) => s.className === spec.className,
   );
-  const systemStubs: TalentNode[] = spec.systemNodeIds.map(makeStub);
+  const allNodeMap = new Map<number, TalentNode>();
+  for (const s of sameClassSpecs) {
+    for (const node of s.classTree.nodes.values())
+      allNodeMap.set(node.id, node);
+    for (const node of s.specTree.nodes.values()) allNodeMap.set(node.id, node);
+    for (const heroTree of s.heroTrees)
+      for (const node of heroTree.nodes.values()) allNodeMap.set(node.id, node);
+    for (const stn of s.subTreeNodes) allNodeMap.set(stn.id, makeStub(stn.id));
+    for (const sid of s.systemNodeIds) allNodeMap.set(sid, makeStub(sid));
+  }
 
-  const allNodes: TalentNode[] = [
-    ...spec.classTree.nodes.values(),
-    ...spec.specTree.nodes.values(),
-    ...subTreeStubs,
-    ...systemStubs,
-  ];
+  const allNodes: TalentNode[] = [...allNodeMap.values()];
 
   const decoded = await showImportHashDialog(allNodes, spec.specId);
   if (!decoded?.selections.length) return;
   const { selections } = decoded;
 
-  // Nodes that should not become user constraints: subTree nodes and system stubs
-  const nonTalentIds = new Set([
-    ...spec.subTreeNodes.map((s) => s.id),
-    ...spec.systemNodeIds,
+  // Nodes eligible for always constraints: current spec's class + spec + hero trees.
+  // Excludes other specs' nodes (they're in allNodes for bit positioning only),
+  // subTree selection nodes, and system stubs.
+  const subTreeAndSystemIds = new Set([
+    ...sameClassSpecs.flatMap((s) => s.subTreeNodes.map((n) => n.id)),
+    ...sameClassSpecs.flatMap((s) => s.systemNodeIds),
+  ]);
+  const currentSpecTalentIds = new Set([
+    ...spec.classTree.nodes.keys(),
+    ...spec.specTree.nodes.keys(),
+    ...spec.heroTrees.flatMap((ht) => [...ht.nodes.keys()]),
   ]);
 
-  // Detect hero tree from the subTreeNode's entryIndex
+  // Detect hero tree from the subTreeNode's entryIndex.
+  // Check all same-class specs' subTreeNodes since the hash uses the class-wide list.
+  const allSubTreeNodes = sameClassSpecs.flatMap((s) => s.subTreeNodes);
   let detectedHeroTree: TalentTree | null = null;
   for (const sel of selections) {
-    const stn = spec.subTreeNodes.find((s) => s.id === sel.nodeId);
+    const stn = allSubTreeNodes.find((s) => s.id === sel.nodeId);
     if (stn && sel.entryIndex !== undefined) {
       const traitSubTreeId = stn.entries[sel.entryIndex]?.traitSubTreeId;
       if (traitSubTreeId != null) {
@@ -611,12 +624,12 @@ async function importTalentHash(): Promise<void> {
     state.selectHeroTree(detectedHeroTree);
   }
 
-  // Apply always constraints for selected class/spec talent nodes.
-  // Skip free/granted nodes (isPurchased=0): they don't cost talent points and
-  // adding explicit constraints for them causes false budget violations in the
-  // solver when the node isn't marked freeNode in the data.
+  // Apply always constraints for selected current-spec talent nodes.
+  // Skip: subTree/system IDs, other specs' nodes, and spec-granted free nodes
+  // (isPurchased=0) which don't cost talent points.
   for (const sel of selections) {
-    if (nonTalentIds.has(sel.nodeId)) continue;
+    if (subTreeAndSystemIds.has(sel.nodeId)) continue;
+    if (!currentSpecTalentIds.has(sel.nodeId)) continue;
     if (sel.free) continue;
 
     const constraint: Constraint = {
