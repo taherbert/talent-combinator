@@ -116,7 +116,9 @@ describe("decodeTalentHash", () => {
   it("decodes a free/granted node (purchased=0)", () => {
     const bits = [...header(), 1, 0];
     const hash = encodeBits(bits);
-    expect(sel(hash, [node(3, 2)])).toEqual([{ nodeId: 3, ranks: 2 }]);
+    expect(sel(hash, [node(3, 2)])).toEqual([
+      { nodeId: 3, ranks: 2, free: true },
+    ]);
   });
 
   it("decodes multiple nodes and skips unselected ones", () => {

@@ -4,6 +4,7 @@ export interface HashSelection {
   nodeId: number;
   ranks: number;
   entryIndex?: number; // choice nodes: 0-based entry index
+  free?: boolean; // isPurchased=0: granted/free, does not cost a talent point
 }
 
 export interface HashDecodeResult {
@@ -71,8 +72,8 @@ export function decodeTalentHash(
 
     const isPurchased = reader.read(1) === 1;
     if (!isPurchased) {
-      // Free/granted node: selected but no purchase details
-      selections.push({ nodeId: node.id, ranks: node.maxRanks });
+      // Granted node: selected for free, does not consume talent points
+      selections.push({ nodeId: node.id, ranks: node.maxRanks, free: true });
       continue;
     }
 

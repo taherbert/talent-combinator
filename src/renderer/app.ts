@@ -611,9 +611,13 @@ async function importTalentHash(): Promise<void> {
     state.selectHeroTree(detectedHeroTree);
   }
 
-  // Apply always constraints for selected class/spec talent nodes
+  // Apply always constraints for selected class/spec talent nodes.
+  // Skip free/granted nodes (isPurchased=0): they don't cost talent points and
+  // adding explicit constraints for them causes false budget violations in the
+  // solver when the node isn't marked freeNode in the data.
   for (const sel of selections) {
     if (nonTalentIds.has(sel.nodeId)) continue;
+    if (sel.free) continue;
 
     const constraint: Constraint = {
       nodeId: sel.nodeId,
