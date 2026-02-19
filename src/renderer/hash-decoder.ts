@@ -1,4 +1,5 @@
 import type { TalentNode } from "../shared/types";
+import { BASE64_CHARS } from "./hash-base64";
 
 export interface HashSelection {
   nodeId: number;
@@ -9,12 +10,9 @@ export interface HashSelection {
 
 export interface HashDecodeResult {
   specId: number;
+  treeHashBytes: number[];
   selections: HashSelection[];
 }
-
-// Standard base64 alphabet used by the WoW talent import/export system
-const BASE64_CHARS =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 // Bits are packed LSB-first: bit 0 of each 6-bit base64 character is the
 // first bit in the stream.
@@ -61,7 +59,8 @@ export function decodeTalentHash(
   if (version !== 1 && version !== 2) return null;
 
   const specId = reader.read(16);
-  for (let i = 0; i < 16; i++) reader.read(8); // tree hash — skip
+  const treeHashBytes: number[] = [];
+  for (let i = 0; i < 16; i++) treeHashBytes.push(reader.read(8));
 
   const sortedNodes = [...nodes].sort((a, b) => a.id - b.id);
   const selections: HashSelection[] = [];
@@ -86,5 +85,5 @@ export function decodeTalentHash(
     selections.push({ nodeId: node.id, ranks, entryIndex });
   }
 
-  return { specId, selections };
+  return { specId, treeHashBytes, selections };
 }

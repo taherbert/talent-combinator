@@ -24,6 +24,7 @@ class AppState {
   private _userOwned = new Set<number>();
   private _triggerNodeId: number | null = null;
   private _validationError: string | null = null;
+  private _treeHashBySpec = new Map<number, number[]>();
 
   get specs(): Specialization[] {
     return this._specs;
@@ -48,6 +49,12 @@ class AppState {
   }
   get hasValidationError(): boolean {
     return this._validationError !== null;
+  }
+  getTreeHash(specId: number): number[] | undefined {
+    return this._treeHashBySpec.get(specId);
+  }
+  setTreeHash(specId: number, hash: number[]): void {
+    this._treeHashBySpec.set(specId, hash);
   }
   subscribe(listener: Listener): () => void {
     this.listeners.push(listener);

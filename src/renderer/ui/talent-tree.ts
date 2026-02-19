@@ -107,8 +107,12 @@ export class TalentTreeView {
     svg.setAttribute("height", String(height));
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-    // Tier gates — subtle line + label
+    // Tier gate lines in SVG
     const gateGroup = document.createElementNS(SVG_NS, "g");
+    // Gate labels as HTML, outside tree-section (sibling column)
+    const gateLabelsEl = document.createElement("div");
+    gateLabelsEl.className = "tree-gate-labels";
+
     for (const gate of tree.gates) {
       const y =
         (gate.row - minRow) * NODE_GAP_Y +
@@ -126,13 +130,11 @@ export class TalentTreeView {
       line.setAttribute("y2", String(y));
       gateGroup.appendChild(line);
 
-      const label = `${gate.requiredPoints} pts`;
-      const labelText = document.createElementNS(SVG_NS, "text");
-      labelText.classList.add("tier-gate-label");
-      labelText.setAttribute("x", "6");
-      labelText.setAttribute("y", String(y - 4));
-      labelText.textContent = label;
-      gateGroup.appendChild(labelText);
+      const label = document.createElement("span");
+      label.className = "tier-gate-label";
+      label.textContent = `${gate.requiredPoints} pts`;
+      label.style.top = `${y}px`;
+      gateLabelsEl.appendChild(label);
     }
 
     // Connectors
@@ -187,6 +189,10 @@ export class TalentTreeView {
     svg.appendChild(nodeGroup);
     svgContainer.appendChild(svg);
     section.appendChild(svgContainer);
+
+    if (gateLabelsEl.children.length > 0) {
+      this.container.appendChild(gateLabelsEl);
+    }
     this.container.appendChild(section);
 
     this.updateNodeStates();

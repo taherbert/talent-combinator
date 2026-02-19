@@ -280,12 +280,23 @@
   opacity: 0.8;
 }
 
+.tree-gate-labels {
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  margin-right: 6px;
+  /* Align with SVG origin: 1px border + 25px summary + 8px svg padding */
+  margin-top: 34px;
+}
+
 .tier-gate-label {
-  fill: var(--text-secondary);
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
   font-size: 9px;
   font-weight: 600;
-  text-anchor: start;
-  opacity: 0.8;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* Tooltip — high contrast */
@@ -509,6 +520,39 @@
 .generate-hint {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.format-toggle {
+  display: flex;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.format-toggle-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.format-toggle-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.format-toggle-btn.active {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.export-hint {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .btn {

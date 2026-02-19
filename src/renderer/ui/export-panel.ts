@@ -1,7 +1,18 @@
 import { state } from "../state";
-import type { Build, TalentTree } from "../../shared/types";
+import type {
+  Build,
+  Specialization,
+  TalentNode,
+  TalentTree,
+} from "../../shared/types";
 import { MAX_PROFILESETS } from "../../shared/constants";
 import { generateTreeBuilds } from "../../shared/build-counter";
+import {
+  encodeTalentHash,
+  buildEntryLookup,
+  buildAllNodesForSpec,
+} from "../hash-encoder";
+import type { EncodeInput, NodeSelection } from "../hash-encoder";
 
 declare const electronAPI: import("../../shared/types").ElectronAPI;
 
@@ -11,13 +22,37 @@ const TREE_TYPE_NAMES: Record<string, string> = {
   hero: "hero_talents",
 };
 
+type ExportFormat = "simc" | "hash";
+
 export class ExportPanel {
   private generateBtn: HTMLButtonElement;
+  private hintEl: HTMLElement;
   private dialogContainer: HTMLElement;
+  private format: ExportFormat = "simc";
+  private simcBtn!: HTMLButtonElement;
+  private hashBtn!: HTMLButtonElement;
+  private lastTotal = 0n;
 
   constructor(counterBar: HTMLElement) {
     const actionsEl = document.createElement("div");
     actionsEl.className = "export-actions";
+
+    // Format toggle
+    const toggle = document.createElement("div");
+    toggle.className = "format-toggle";
+
+    this.simcBtn = document.createElement("button");
+    this.simcBtn.className = "format-toggle-btn active";
+    this.simcBtn.textContent = "SimC Profilesets";
+    this.simcBtn.addEventListener("click", () => this.setFormat("simc"));
+
+    this.hashBtn = document.createElement("button");
+    this.hashBtn.className = "format-toggle-btn";
+    this.hashBtn.textContent = "Talent Hashes";
+    this.hashBtn.addEventListener("click", () => this.setFormat("hash"));
+
+    toggle.append(this.simcBtn, this.hashBtn);
+    actionsEl.appendChild(toggle);
 
     this.generateBtn = document.createElement("button");
     this.generateBtn.className = "btn btn-primary";
@@ -26,16 +61,51 @@ export class ExportPanel {
     this.generateBtn.addEventListener("click", () => this.generate());
     actionsEl.appendChild(this.generateBtn);
 
+    this.hintEl = document.createElement("span");
+    this.hintEl.className = "export-hint";
+    actionsEl.appendChild(this.hintEl);
+
     counterBar.appendChild(actionsEl);
     this.dialogContainer = document.getElementById("dialog-container")!;
 
     state.subscribe((event) => {
       if (event.type === "count-updated") {
-        const total = event.counts.totalCount;
-        this.generateBtn.disabled =
-          total <= 0 || total === -1 || total > MAX_PROFILESETS;
+        this.lastTotal = event.counts.totalCount;
+        this.updateButtonState();
       }
     });
+  }
+
+  private setFormat(format: ExportFormat): void {
+    this.format = format;
+    this.simcBtn.classList.toggle("active", format === "simc");
+    this.hashBtn.classList.toggle("active", format === "hash");
+    this.updateButtonState();
+  }
+
+  private updateButtonState(): void {
+    const total = this.lastTotal;
+    const MAX_BIG = BigInt(MAX_PROFILESETS);
+    if (this.format === "simc") {
+      this.generateBtn.disabled = total <= 0n || total > MAX_BIG;
+      this.hintEl.textContent = "";
+    } else {
+      const specId = state.activeSpec?.specId;
+      const hasHash = specId != null && state.getTreeHash(specId) != null;
+      if (total <= 0n) {
+        this.generateBtn.disabled = true;
+        this.hintEl.textContent = "";
+      } else if (!hasHash) {
+        this.generateBtn.disabled = true;
+        this.hintEl.textContent = "Import a talent hash to enable";
+      } else if (total > MAX_BIG) {
+        this.generateBtn.disabled = true;
+        this.hintEl.textContent = "";
+      } else {
+        this.generateBtn.disabled = false;
+        this.hintEl.textContent = "";
+      }
+    }
   }
 
   private async generate(): Promise<void> {
@@ -54,9 +124,14 @@ export class ExportPanel {
         const constraints = state.getConstraintsForTree(tree);
         return generateTreeBuilds(tree, constraints);
       });
-      const output = this.generateProfilesets(allBuilds, trees);
 
-      this.showExportDialog(output);
+      if (this.format === "simc") {
+        const output = this.generateProfilesets(allBuilds, trees);
+        this.showExportDialog(output, "simc");
+      } else {
+        const output = this.generateHashes(allBuilds, trees, spec);
+        this.showExportDialog(output, "hash");
+      }
     } finally {
       this.generateBtn.disabled = false;
       this.generateBtn.textContent = "Generate";
@@ -106,6 +181,122 @@ export class ExportPanel {
     return lines.join("\n");
   }
 
+  private generateHashes(
+    allBuilds: Build[][],
+    trees: TalentTree[],
+    spec: Specialization,
+  ): string {
+    if (allBuilds.some((b) => b.length === 0)) return "";
+
+    const specId = spec.specId;
+    if (specId == null) return "";
+    const treeHashBytes = state.getTreeHash(specId);
+    if (!treeHashBytes) return "";
+
+    // Build entry lookups for each tree
+    const entryLookups = trees.map((tree) =>
+      buildEntryLookup(tree.nodes.values()),
+    );
+
+    // Assemble full node list for encoding
+    const sameClassSpecs = state.specs.filter(
+      (s) => s.className === spec.className,
+    );
+    const { allNodes, allNodeMap } = buildAllNodesForSpec(sameClassSpecs);
+
+    // Detect subTreeNode + entryIndex for the active hero tree
+    const heroTree = state.activeHeroTree;
+    let subTreeNodeId: number | undefined;
+    let subTreeEntryIndex: number | undefined;
+    if (heroTree?.subTreeId != null) {
+      for (const s of sameClassSpecs) {
+        for (const stn of s.subTreeNodes) {
+          const idx = stn.entries.findIndex(
+            (e) => e.traitSubTreeId === heroTree.subTreeId,
+          );
+          if (idx >= 0) {
+            subTreeNodeId = stn.id;
+            subTreeEntryIndex = idx;
+            break;
+          }
+        }
+        if (subTreeNodeId != null) break;
+      }
+    }
+
+    // Free/granted nodes from the active spec's trees only — selected but
+    // not purchased. Other specs' free nodes remain unselected (0 bit).
+    const freeNodeIds = new Set<number>();
+    for (const tree of trees) {
+      for (const node of tree.nodes.values()) {
+        if (node.freeNode || node.entryNode) freeNodeIds.add(node.id);
+      }
+    }
+
+    const lines: string[] = [];
+    const indices = new Array(allBuilds.length).fill(0);
+    let index = 0;
+
+    while (true) {
+      const selections = new Map<number, NodeSelection>();
+
+      // Free/granted nodes — selected but not purchased
+      for (const nodeId of freeNodeIds) {
+        const node = allNodeMap.get(nodeId);
+        if (node) {
+          selections.set(nodeId, {
+            ranks: node.maxRanks,
+            isPurchased: false,
+          });
+        }
+      }
+
+      // SubTreeNode selection (hero tree choice)
+      if (subTreeNodeId != null && subTreeEntryIndex != null) {
+        selections.set(subTreeNodeId, {
+          ranks: 1,
+          entryIndex: subTreeEntryIndex,
+          isPurchased: true,
+        });
+      }
+
+      // Merge builds from each tree
+      for (let i = 0; i < allBuilds.length; i++) {
+        const build = allBuilds[i][indices[i]];
+        const lookup = entryLookups[i];
+        for (const [entryId, points] of build.entries) {
+          if (points <= 0) continue;
+          const info = lookup.get(entryId);
+          if (!info) continue;
+          selections.set(info.nodeId, {
+            ranks: points,
+            entryIndex: info.entryIndex,
+            isPurchased: true,
+          });
+        }
+      }
+
+      const input: EncodeInput = { specId, treeHashBytes, selections };
+      const hash = encodeTalentHash(input, allNodes);
+      const name = String(index).padStart(4, "0");
+      lines.push(`profileset.build_${name}=talents=${hash}`);
+      index++;
+
+      let carry = true;
+      for (let i = allBuilds.length - 1; i >= 0 && carry; i--) {
+        indices[i]++;
+        if (indices[i] < allBuilds[i].length) {
+          carry = false;
+        } else {
+          indices[i] = 0;
+        }
+      }
+      if (carry) break;
+    }
+
+    return lines.join("\n");
+  }
+
   private encodeBuild(build: Build): string {
     return Array.from(build.entries.entries())
       .filter(([, points]) => points > 0)
@@ -114,7 +305,8 @@ export class ExportPanel {
       .join("/");
   }
 
-  private showExportDialog(output: string): void {
+  private showExportDialog(output: string, format: ExportFormat): void {
+    const isHash = format === "hash";
     const dialog = document.createElement("div");
     dialog.className = "export-dialog";
 
@@ -125,7 +317,7 @@ export class ExportPanel {
     header.className = "export-dialog-header";
 
     const title = document.createElement("h2");
-    title.textContent = "Export Profilesets";
+    title.textContent = isHash ? "Export Talent Hashes" : "Export Profilesets";
     header.appendChild(title);
 
     const closeBtn = document.createElement("button");
@@ -149,12 +341,12 @@ export class ExportPanel {
     const footer = document.createElement("div");
     footer.className = "export-dialog-footer";
 
-    const buildCount = output
+    const count = output
       .split("\n")
       .filter((l) => l.startsWith("profileset.") && !l.includes("+=")).length;
     const stats = document.createElement("span");
     stats.className = "export-stats";
-    stats.textContent = `${buildCount.toLocaleString()} profilesets`;
+    stats.textContent = `${count.toLocaleString()} profilesets`;
     footer.appendChild(stats);
 
     const actions = document.createElement("div");
@@ -176,8 +368,12 @@ export class ExportPanel {
     saveBtn.addEventListener("click", async () => {
       const spec = state.activeSpec;
       const defaultName = spec
-        ? `${spec.className}_${spec.specName}_profiles.simc`
-        : "profiles.simc";
+        ? isHash
+          ? `${spec.className}_${spec.specName}_hashes.txt`
+          : `${spec.className}_${spec.specName}_profiles.simc`
+        : isHash
+          ? "hashes.txt"
+          : "profiles.simc";
       await electronAPI.saveFile(output, defaultName);
     });
     actions.appendChild(saveBtn);
