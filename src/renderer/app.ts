@@ -4,11 +4,7 @@ import { TalentTreeView } from "./ui/talent-tree";
 import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
 import { countTreeBuilds } from "../shared/build-counter";
-import {
-  decodeTalentHash,
-  type HashDecodeResult,
-  type HashSelection,
-} from "./hash-decoder";
+import { decodeTalentHash } from "./hash-decoder";
 import type {
   Constraint,
   CountResult,
@@ -354,6 +350,82 @@ function recomputeImpliedForTree(tree: TalentTree): void {
   }
 }
 
+// --- Validation ---
+
+function formatTriggerMessage(nodeName: string, errorMessage: string): string {
+  // Budget exceeded: "... need X points — exceeds the Y-point budget by Z"
+  const budgetMatch = errorMessage.match(
+    /need (\d+) points.*?(\d+)-point budget/,
+  );
+  if (budgetMatch) {
+    return `"${nodeName}" exceeds the ${budgetMatch[2]}-point budget (required talents need ${budgetMatch[1]} points)`;
+  }
+  // Blocked too many: "X points selectable, Y needed"
+  const blockedMatch = errorMessage.match(
+    /(\d+) points selectable, (\d+) needed/,
+  );
+  if (blockedMatch) {
+    return `Blocking "${nodeName}" leaves only ${blockedMatch[1]} points selectable (${blockedMatch[2]} needed)`;
+  }
+  // Unreachable
+  if (errorMessage.includes("can't be reached")) {
+    return `"${nodeName}" can't be reached — all paths to it are blocked`;
+  }
+  // Always+Never conflict
+  if (errorMessage.includes("both Always and Never")) {
+    return `"${nodeName}" is both Always and Never`;
+  }
+  // Gate-related: pass through with trigger prefix
+  return `"${nodeName}": ${errorMessage}`;
+}
+
+function validateAndSetError(triggerNodeId: number): boolean {
+  const tree = findTreeForNode(triggerNodeId);
+  if (!tree) return false;
+
+  const constraints = state.getConstraintsForTree(tree);
+  const result = countTreeBuilds(tree, constraints);
+  const error = result.warnings.find((w) => w.severity === "error");
+  if (error) {
+    const node = tree.nodes.get(triggerNodeId);
+    const nodeName = node?.name ?? `Node ${triggerNodeId}`;
+    const message = formatTriggerMessage(nodeName, error.message);
+    state.setValidationError(triggerNodeId, message);
+    return true;
+  }
+  state.clearValidationError();
+  return false;
+}
+
+function revalidateAllTrees(): void {
+  const spec = state.activeSpec;
+  if (!spec) return;
+
+  const trees: TalentTree[] = [spec.classTree, spec.specTree];
+  const heroTree = state.activeHeroTree;
+  if (heroTree) trees.push(heroTree);
+
+  for (const tree of trees) {
+    const constraints = state.getConstraintsForTree(tree);
+    const result = countTreeBuilds(tree, constraints);
+    const error = result.warnings.find((w) => w.severity === "error");
+    if (error) {
+      // Update trigger to the actual erroring node (may differ after removal)
+      const errorNodeId = error.nodeIds?.[0] ?? state.triggerNodeId;
+      if (errorNodeId != null) {
+        const node = tree.nodes.get(errorNodeId);
+        const nodeName = node?.name ?? `Node ${errorNodeId}`;
+        state.setValidationError(
+          errorNodeId,
+          formatTriggerMessage(nodeName, error.message),
+        );
+      }
+      return;
+    }
+  }
+  state.clearValidationError();
+}
+
 // --- Auto-select hero nodes ---
 
 function isRealChoice(node: TalentNode): boolean {
@@ -410,6 +482,7 @@ state.subscribe((event) => {
       const tree = findTreeForNode(nodeId);
       if (tree) recomputeImpliedForTree(tree);
 
+      validateAndSetError(nodeId);
       if (key) scheduleCount(key);
       break;
     }
@@ -417,6 +490,7 @@ state.subscribe((event) => {
       const tree = findTreeForNode(event.nodeId);
       if (tree) recomputeImpliedForTree(tree);
 
+      revalidateAllTrees();
       const key = detectTreeKey(event.nodeId);
       if (key) scheduleCount(key);
       break;
@@ -426,15 +500,15 @@ state.subscribe((event) => {
 
 // --- Import talent hash ---
 
-function showImportHashDialog(
-  nodes: TalentNode[],
-  specId: number | undefined,
-): Promise<HashDecodeResult | null> {
+function showImportHashDialog(): Promise<{
+  hashStr: string;
+  specId: number;
+} | null> {
   return new Promise((resolve) => {
     const dialogContainer = document.getElementById("dialog-container")!;
     let resolved = false;
 
-    const finish = (val: HashDecodeResult | null): void => {
+    const finish = (val: { hashStr: string; specId: number } | null): void => {
       if (resolved) return;
       resolved = true;
       overlay.remove();
@@ -498,25 +572,15 @@ function showImportHashDialog(
         errorMsg.style.display = "block";
         return;
       }
-      const result = decodeTalentHash(val, nodes);
-      if (result === null) {
+      // First-pass decode with empty node list to validate format + extract specId
+      const probe = decodeTalentHash(val, []);
+      if (probe === null) {
         errorMsg.textContent =
           "Invalid talent string. Paste the full import string from the game or Wowhead.";
         errorMsg.style.display = "block";
         return;
       }
-      if (result.selections.length === 0) {
-        errorMsg.textContent =
-          "No talents found in this string. Make sure you are importing a build with at least one selected talent.";
-        errorMsg.style.display = "block";
-        return;
-      }
-      if (specId != null && result.specId !== specId) {
-        errorMsg.textContent = `This string is for a different spec (id ${result.specId}). Select the matching spec first, then import.`;
-        errorMsg.style.display = "block";
-        return;
-      }
-      finish(result);
+      finish({ hashStr: val, specId: probe.specId });
     });
 
     footer.append(cancelBtn, importBtn);
@@ -538,8 +602,24 @@ function showImportHashDialog(
 }
 
 async function importTalentHash(): Promise<void> {
-  const spec = state.activeSpec;
-  if (!spec) return;
+  const dialogResult = await showImportHashDialog();
+  if (!dialogResult) return;
+
+  const { hashStr, specId } = dialogResult;
+  const targetSpec = state.specs.find((s) => s.specId === specId);
+  if (!targetSpec) return;
+
+  const currentSpec = state.activeSpec;
+  if (
+    currentSpec &&
+    currentSpec.specId !== specId &&
+    state.constraints.size > 0
+  ) {
+    const ok = window.confirm(
+      `This hash is for ${targetSpec.className} ${targetSpec.specName}. Switching will clear current constraints. Continue?`,
+    );
+    if (!ok) return;
+  }
 
   // The hash encodes ALL nodes the game returns from C_Traits.GetTreeNodes —
   // class nodes, every spec's spec/hero nodes (including other specs of the
@@ -565,10 +645,8 @@ async function importTalentHash(): Promise<void> {
     };
   }
 
-  // Include every spec of the same class (deduped by nodeId) for correct
-  // bit positioning when decoding.
   const sameClassSpecs = state.specs.filter(
-    (s) => s.className === spec.className,
+    (s) => s.className === targetSpec.className,
   );
   const allNodeMap = new Map<number, TalentNode>();
   for (const s of sameClassSpecs) {
@@ -583,25 +661,21 @@ async function importTalentHash(): Promise<void> {
 
   const allNodes: TalentNode[] = [...allNodeMap.values()];
 
-  const decoded = await showImportHashDialog(allNodes, spec.specId);
+  const decoded = decodeTalentHash(hashStr, allNodes);
   if (!decoded?.selections.length) return;
   const { selections } = decoded;
 
-  // Nodes eligible for always constraints: current spec's class + spec + hero trees.
-  // Excludes other specs' nodes (they're in allNodes for bit positioning only),
-  // subTree selection nodes, and system stubs.
   const subTreeAndSystemIds = new Set([
     ...sameClassSpecs.flatMap((s) => s.subTreeNodes.map((n) => n.id)),
     ...sameClassSpecs.flatMap((s) => s.systemNodeIds),
   ]);
   const currentSpecTalentIds = new Set([
-    ...spec.classTree.nodes.keys(),
-    ...spec.specTree.nodes.keys(),
-    ...spec.heroTrees.flatMap((ht) => [...ht.nodes.keys()]),
+    ...targetSpec.classTree.nodes.keys(),
+    ...targetSpec.specTree.nodes.keys(),
+    ...targetSpec.heroTrees.flatMap((ht) => [...ht.nodes.keys()]),
   ]);
 
   // Detect hero tree from the subTreeNode's entryIndex.
-  // Check all same-class specs' subTreeNodes since the hash uses the class-wide list.
   const allSubTreeNodes = sameClassSpecs.flatMap((s) => s.subTreeNodes);
   let detectedHeroTree: TalentTree | null = null;
   for (const sel of selections) {
@@ -610,23 +684,20 @@ async function importTalentHash(): Promise<void> {
       const traitSubTreeId = stn.entries[sel.entryIndex]?.traitSubTreeId;
       if (traitSubTreeId != null) {
         detectedHeroTree =
-          spec.heroTrees.find((ht) => ht.subTreeId === traitSubTreeId) ?? null;
+          targetSpec.heroTrees.find((ht) => ht.subTreeId === traitSubTreeId) ??
+          null;
         break;
       }
     }
   }
 
-  // Reset spec state (clears constraints, auto-selects first hero tree)
-  state.selectSpec(spec);
+  state.selectSpec(targetSpec);
 
-  // Switch to the detected hero tree if different from the auto-selected one
   if (detectedHeroTree && detectedHeroTree !== state.activeHeroTree) {
     state.selectHeroTree(detectedHeroTree);
   }
 
-  // Apply always constraints for selected current-spec talent nodes.
-  // Skip: subTree/system IDs, other specs' nodes, and truly free nodes
-  // (freeNode nodes cost zero points and are always taken).
+  // Skip subTree/system IDs, other specs' nodes, and free nodes (always granted, zero cost).
   for (const sel of selections) {
     if (subTreeAndSystemIds.has(sel.nodeId)) continue;
     if (!currentSpecTalentIds.has(sel.nodeId)) continue;
@@ -643,6 +714,7 @@ async function importTalentHash(): Promise<void> {
       exactRank: sel.ranks,
     };
     state.setConstraint(constraint);
+    if (state.hasValidationError) break;
   }
 }
 
@@ -672,10 +744,8 @@ async function loadLoadout(): Promise<void> {
   );
   if (!spec) return;
 
-  // Select spec (clears existing constraints)
   state.selectSpec(spec);
 
-  // Select hero tree
   if (loadout.heroTreeName) {
     const heroTree = spec.heroTrees.find(
       (ht) => ht.subTreeName === loadout.heroTreeName,
@@ -683,9 +753,9 @@ async function loadLoadout(): Promise<void> {
     if (heroTree) state.selectHeroTree(heroTree);
   }
 
-  // Restore constraints
   for (const constraint of loadout.constraints) {
     state.setConstraint(constraint);
+    if (state.hasValidationError) break;
   }
 }
 

@@ -267,6 +267,7 @@ export class TalentNodeView {
       "never",
       "conditional",
       "implied",
+      "free",
     );
     this.group.classList.add(nodeState);
     this.group.classList.toggle("error", !!hasError);

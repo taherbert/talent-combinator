@@ -141,7 +141,8 @@ export type NodeState =
   | "always"
   | "never"
   | "conditional"
-  | "implied";
+  | "implied"
+  | "free";
 
 // --- Solver types ---
 
@@ -224,7 +225,8 @@ export type AppEvent =
   | { type: "constraint-removed"; nodeId: number }
   | { type: "count-updated"; counts: TreeCounts }
   | { type: "generation-complete"; result: SolverResult }
-  | { type: "data-loaded"; data: TalentDataResult };
+  | { type: "data-loaded"; data: TalentDataResult }
+  | { type: "validation-changed" };
 
 export interface TreeCounts {
   classCount: bigint;

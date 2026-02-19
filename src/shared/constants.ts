@@ -22,6 +22,6 @@ export const POINT_BUDGET_SPEC = 34;
 export const POINT_BUDGET_HERO = 13;
 
 export const NODE_SIZE = 44;
-export const NODE_GAP_X = 50;
+export const NODE_GAP_X = 72;
 export const NODE_GAP_Y = 72;
 export const TREE_PADDING = 20;

@@ -158,6 +158,19 @@
   fill: var(--color-amber-dim);
 }
 
+.talent-node.free .node-bg {
+  stroke: var(--node-free);
+  fill: var(--color-blue-dim);
+}
+
+.talent-node.free .node-icon {
+  opacity: 1;
+}
+
+.talent-node.free .node-name {
+  fill: var(--text-secondary);
+}
+
 /* Error overlay — pulsing red outline on problem nodes */
 .talent-node.error .node-bg {
   stroke: var(--color-red);
@@ -221,7 +234,7 @@
 }
 
 .talent-node .node-name {
-  fill: var(--text-muted);
+  fill: var(--text-secondary);
   font-size: 9px;
   text-anchor: middle;
   transition: fill var(--transition-normal);
@@ -268,11 +281,11 @@
 }
 
 .tier-gate-label {
-  fill: var(--text-muted);
+  fill: var(--text-secondary);
   font-size: 9px;
   font-weight: 600;
   text-anchor: end;
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
 /* Tooltip — high contrast */
@@ -303,7 +316,7 @@
 }
 
 .talent-tooltip .tooltip-meta {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 11px;
   margin-top: 2px;
 }
@@ -437,12 +450,12 @@
 
 .count-breakdown {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .count-timing {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .count-warning {

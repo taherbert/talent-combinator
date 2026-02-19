@@ -62,6 +62,9 @@ export class CombinationCounter {
       if (event.type === "count-updated") {
         this.update(event.counts);
       }
+      if (event.type === "validation-changed") {
+        this.updateValidationDisplay();
+      }
     });
   }
 
@@ -77,7 +80,7 @@ export class CombinationCounter {
 
     if (total === 0n) {
       this.countEl.classList.add("red");
-      if (warnings.length === 0) {
+      if (warnings.length === 0 && !state.hasValidationError) {
         this.warningEl.textContent = "No valid builds — check constraints";
       } else {
         this.warningEl.textContent = "";
@@ -139,7 +142,20 @@ export class CombinationCounter {
     return warnings;
   }
 
+  private updateValidationDisplay(): void {
+    this.errorsEl.innerHTML = "";
+    if (state.hasValidationError) {
+      const line = document.createElement("div");
+      line.className = "validation-error-line";
+      line.textContent = state.validationError!;
+      this.errorsEl.appendChild(line);
+    }
+  }
+
   private showWarnings(warnings: CountWarning[]): void {
+    // Validation errors take precedence — shown via updateValidationDisplay
+    if (state.hasValidationError) return;
+
     this.errorsEl.innerHTML = "";
     if (warnings.length === 0) return;
 

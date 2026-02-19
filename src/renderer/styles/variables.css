@@ -30,6 +30,7 @@
   --node-always: var(--color-green);
   --node-never: var(--color-red);
   --node-conditional: var(--color-amber);
+  --node-free: var(--color-blue);
 
   /* Sizes */
   --node-size: 44px;

@@ -47,12 +47,14 @@ export class TalentTreeView {
         this.updateNodeStates();
         this.updateConnectors();
         this.updateConstraintSummary();
-        // Refresh tooltip if hovering over a node
         if (this.hoveredNode && this.lastHoverEvent) {
           this.renderTooltip(this.hoveredNode, this.lastHoverEvent);
         }
       }
-      if (event.type === "count-updated") {
+      if (
+        event.type === "count-updated" ||
+        event.type === "validation-changed"
+      ) {
         this.updateNodeStates();
       }
     });
@@ -194,6 +196,14 @@ export class TalentTreeView {
   private handleClick(node: TalentNode, event: MouseEvent): void {
     if (node.freeNode) return; // Free nodes are always granted, not interactive
 
+    // During validation error: only allow clearing existing constraints
+    if (state.hasValidationError) {
+      if (state.constraints.has(node.id)) {
+        state.removeConstraint(node.id);
+      }
+      return;
+    }
+
     // Multi-rank or choice nodes get a popover
     const hasDistinctChoices =
       node.type === "choice" &&
@@ -253,67 +263,74 @@ export class TalentTreeView {
       popover.appendChild(btn);
     };
 
-    const hasDistinctChoices =
-      node.type === "choice" &&
-      !node.isApex &&
-      new Set(node.entries.map((e) => e.name || e.id)).size > 1;
-
-    if (hasDistinctChoices) {
-      // Choice node: one button per entry
-      for (let i = 0; i < node.entries.length; i++) {
-        const entry = node.entries[i];
-        const entryName = entry.name || `Choice ${i + 1}`;
-        const active =
-          current?.type === "always" && current.entryIndex === i
-            ? "active-always"
-            : null;
-        addBtn(`Always: ${entryName}`, active, () =>
-          state.setConstraint({
-            nodeId: node.id,
-            type: "always",
-            entryIndex: i,
-          }),
-        );
+    if (state.hasValidationError) {
+      // Only allow clearing during validation error
+      if (current) {
+        addBtn("Clear", null, () => state.removeConstraint(node.id), "clear");
       }
-
-      const anyActive =
-        current?.type === "always" && current.entryIndex == null
-          ? "active-always"
-          : null;
-      addBtn("Always (either)", anyActive, () =>
-        state.setConstraint({ nodeId: node.id, type: "always" }),
-      );
     } else {
-      // Multi-rank node: one button per rank level
-      for (let r = 1; r <= node.maxRanks; r++) {
-        const active =
-          current?.type === "always" && current.exactRank === r
+      const hasDistinctChoices =
+        node.type === "choice" &&
+        !node.isApex &&
+        new Set(node.entries.map((e) => e.name || e.id)).size > 1;
+
+      if (hasDistinctChoices) {
+        // Choice node: one button per entry
+        for (let i = 0; i < node.entries.length; i++) {
+          const entry = node.entries[i];
+          const entryName = entry.name || `Choice ${i + 1}`;
+          const active =
+            current?.type === "always" && current.entryIndex === i
+              ? "active-always"
+              : null;
+          addBtn(`Always: ${entryName}`, active, () =>
+            state.setConstraint({
+              nodeId: node.id,
+              type: "always",
+              entryIndex: i,
+            }),
+          );
+        }
+
+        const anyActive =
+          current?.type === "always" && current.entryIndex == null
             ? "active-always"
             : null;
-        addBtn(`Always at ${r}/${node.maxRanks}`, active, () =>
-          state.setConstraint({
-            nodeId: node.id,
-            type: "always",
-            exactRank: r,
-          }),
+        addBtn("Always (either)", anyActive, () =>
+          state.setConstraint({ nodeId: node.id, type: "always" }),
+        );
+      } else {
+        // Multi-rank node: one button per rank level
+        for (let r = 1; r <= node.maxRanks; r++) {
+          const active =
+            current?.type === "always" && current.exactRank === r
+              ? "active-always"
+              : null;
+          addBtn(`Always at ${r}/${node.maxRanks}`, active, () =>
+            state.setConstraint({
+              nodeId: node.id,
+              type: "always",
+              exactRank: r,
+            }),
+          );
+        }
+
+        const anyActive =
+          current?.type === "always" && current.exactRank == null
+            ? "active-always"
+            : null;
+        addBtn("Always (any rank)", anyActive, () =>
+          state.setConstraint({ nodeId: node.id, type: "always" }),
         );
       }
 
-      const anyActive =
-        current?.type === "always" && current.exactRank == null
-          ? "active-always"
-          : null;
-      addBtn("Always (any rank)", anyActive, () =>
-        state.setConstraint({ nodeId: node.id, type: "always" }),
+      addBtn("Never", current?.type === "never" ? "active-never" : null, () =>
+        state.setConstraint({ nodeId: node.id, type: "never" }),
       );
-    }
 
-    addBtn("Never", current?.type === "never" ? "active-never" : null, () =>
-      state.setConstraint({ nodeId: node.id, type: "never" }),
-    );
-
-    if (current) {
-      addBtn("Clear", null, () => state.removeConstraint(node.id), "clear");
+      if (current) {
+        addBtn("Clear", null, () => state.removeConstraint(node.id), "clear");
+      }
     }
 
     document.getElementById("dialog-container")!.appendChild(popover);
@@ -348,7 +365,7 @@ export class TalentTreeView {
   }
 
   private handleContextMenu(node: TalentNode, event: MouseEvent): void {
-    if (!this.tree) return;
+    if (!this.tree || state.hasValidationError) return;
     this.conditionEditor.open(node, this.tree, event.clientX, event.clientY);
   }
 
@@ -503,14 +520,14 @@ export class TalentTreeView {
       const node = this.tree.nodes.get(nodeId)!;
       const constraint = state.constraints.get(nodeId);
       let nodeState: NodeState;
-      if (node.freeNode) {
-        nodeState = "implied"; // Free nodes are always granted
+      if (node.freeNode && !constraint) {
+        nodeState = "free";
       } else if (constraint?.type === "always" && state.isImplied(nodeId)) {
         nodeState = "implied";
       } else {
         nodeState = constraint?.type ?? "available";
       }
-      const hasError = state.warningNodeIds.has(nodeId);
+      const hasError = state.triggerNodeId === nodeId;
       view.setState(nodeState, constraint, hasError);
     }
   }
