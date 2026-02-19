@@ -226,6 +226,12 @@
   stroke-linejoin: round;
 }
 
+/* Either-state split icon divider */
+.either-divider {
+  stroke: rgba(255, 255, 255, 0.4);
+  stroke-width: 1.5;
+}
+
 .talent-node .condition-badge {
   fill: var(--color-amber);
   font-size: 9px;
