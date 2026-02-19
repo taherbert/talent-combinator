@@ -16,6 +16,9 @@ export class TalentNodeView {
   private readonly clipId: string;
   private readonly iconOffset: number;
   private readonly iconSize: number;
+  private eitherGroup: SVGGElement | null = null;
+  private eitherLeftImg: SVGImageElement | null = null;
+  private eitherRightImg: SVGImageElement | null = null;
 
   constructor(
     readonly node: TalentNode,
@@ -135,6 +138,11 @@ export class TalentNodeView {
       this.group.appendChild(badge);
     }
 
+    // Split icon overlay for "always (either)" state on choice nodes
+    if (isVisualChoice) {
+      this.createEitherOverlay();
+    }
+
     // Name label below node
     const displayName = node.name || "Unknown";
     const nameText = document.createElementNS(SVG_NS, "text");
@@ -193,6 +201,7 @@ export class TalentNodeView {
       if (!this.iconEl && (entryIndex === -1 || !this.iconUrls.has(-1))) {
         this.showIcon(url);
       }
+      this.updateEitherIcons();
     };
     probe.onerror = () => {
       // Try replacing __ with -_ (Raidbots data encoding quirk)
@@ -205,6 +214,7 @@ export class TalentNodeView {
           if (!this.iconEl && (entryIndex === -1 || !this.iconUrls.has(-1))) {
             this.showIcon(altUrl);
           }
+          this.updateEitherIcons();
         };
         retry.src = altUrl;
       }
@@ -239,6 +249,74 @@ export class TalentNodeView {
     iconBg.setAttribute("fill", "var(--bg-primary)");
     iconBg.classList.add("node-icon");
     this.group.appendChild(iconBg);
+  }
+
+  private createEitherOverlay(): void {
+    const halfW = this.iconSize / 2;
+
+    const defs = document.createElementNS(SVG_NS, "defs");
+
+    const leftClipId = `${this.clipId}-left`;
+    const leftClip = document.createElementNS(SVG_NS, "clipPath");
+    leftClip.setAttribute("id", leftClipId);
+    const leftRect = document.createElementNS(SVG_NS, "rect");
+    leftRect.setAttribute("x", String(this.iconOffset));
+    leftRect.setAttribute("y", String(this.iconOffset));
+    leftRect.setAttribute("width", String(halfW));
+    leftRect.setAttribute("height", String(this.iconSize));
+    leftClip.appendChild(leftRect);
+    defs.appendChild(leftClip);
+
+    const rightClipId = `${this.clipId}-right`;
+    const rightClip = document.createElementNS(SVG_NS, "clipPath");
+    rightClip.setAttribute("id", rightClipId);
+    const rightRect = document.createElementNS(SVG_NS, "rect");
+    rightRect.setAttribute("x", String(this.iconOffset + halfW));
+    rightRect.setAttribute("y", String(this.iconOffset));
+    rightRect.setAttribute("width", String(halfW));
+    rightRect.setAttribute("height", String(this.iconSize));
+    rightClip.appendChild(rightRect);
+    defs.appendChild(rightClip);
+
+    this.group.appendChild(defs);
+
+    this.eitherGroup = document.createElementNS(SVG_NS, "g");
+    this.eitherGroup.classList.add("either-icons");
+    this.eitherGroup.style.display = "none";
+
+    this.eitherLeftImg = document.createElementNS(SVG_NS, "image");
+    this.eitherLeftImg.setAttribute("x", String(this.iconOffset));
+    this.eitherLeftImg.setAttribute("y", String(this.iconOffset));
+    this.eitherLeftImg.setAttribute("width", String(this.iconSize));
+    this.eitherLeftImg.setAttribute("height", String(this.iconSize));
+    this.eitherLeftImg.setAttribute("clip-path", `url(#${leftClipId})`);
+    this.eitherGroup.appendChild(this.eitherLeftImg);
+
+    this.eitherRightImg = document.createElementNS(SVG_NS, "image");
+    this.eitherRightImg.setAttribute("x", String(this.iconOffset));
+    this.eitherRightImg.setAttribute("y", String(this.iconOffset));
+    this.eitherRightImg.setAttribute("width", String(this.iconSize));
+    this.eitherRightImg.setAttribute("height", String(this.iconSize));
+    this.eitherRightImg.setAttribute("clip-path", `url(#${rightClipId})`);
+    this.eitherGroup.appendChild(this.eitherRightImg);
+
+    const divider = document.createElementNS(SVG_NS, "line");
+    divider.setAttribute("x1", String(this.iconOffset + halfW));
+    divider.setAttribute("y1", String(this.iconOffset));
+    divider.setAttribute("x2", String(this.iconOffset + halfW));
+    divider.setAttribute("y2", String(this.iconOffset + this.iconSize));
+    divider.classList.add("either-divider");
+    this.eitherGroup.appendChild(divider);
+
+    this.group.insertBefore(this.eitherGroup, this.conditionBadge);
+  }
+
+  private updateEitherIcons(): void {
+    if (!this.eitherLeftImg || !this.eitherRightImg) return;
+    const url0 = this.iconUrls.get(0);
+    const url1 = this.iconUrls.get(1);
+    if (url0) this.eitherLeftImg.setAttributeNS(XLINK_NS, "href", url0);
+    if (url1) this.eitherRightImg.setAttributeNS(XLINK_NS, "href", url1);
   }
 
   private createRoundedRect(): SVGRectElement {
@@ -298,15 +376,29 @@ export class TalentNodeView {
     }
 
     // Swap icon for choice nodes when entryIndex changes
-    if (this.iconEl && constraint?.entryIndex != null) {
-      const entryUrl = this.iconUrls.get(constraint.entryIndex);
-      if (entryUrl) {
-        this.iconEl.setAttributeNS(XLINK_NS, "href", entryUrl);
-      }
-    } else if (this.iconEl && constraint?.entryIndex == null) {
-      const defaultUrl = this.iconUrls.get(-1);
-      if (defaultUrl) {
-        this.iconEl.setAttributeNS(XLINK_NS, "href", defaultUrl);
+    const isEitherState =
+      this.node.type === "choice" &&
+      !this.node.isApex &&
+      constraint?.type === "always" &&
+      constraint.entryIndex == null;
+
+    if (isEitherState && this.eitherGroup) {
+      if (this.iconEl) this.iconEl.style.display = "none";
+      this.eitherGroup.style.display = "";
+    } else {
+      if (this.eitherGroup) this.eitherGroup.style.display = "none";
+      if (this.iconEl) this.iconEl.style.display = "";
+
+      if (this.iconEl && constraint?.entryIndex != null) {
+        const entryUrl = this.iconUrls.get(constraint.entryIndex);
+        if (entryUrl) {
+          this.iconEl.setAttributeNS(XLINK_NS, "href", entryUrl);
+        }
+      } else if (this.iconEl && constraint?.entryIndex == null) {
+        const defaultUrl = this.iconUrls.get(-1);
+        if (defaultUrl) {
+          this.iconEl.setAttributeNS(XLINK_NS, "href", defaultUrl);
+        }
       }
     }
   }
