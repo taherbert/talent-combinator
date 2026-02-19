@@ -5,17 +5,23 @@ import { MAX_PROFILESETS, COUNT_THRESHOLDS } from "../../shared/constants";
 const MAX_PROFILESETS_BIG = BigInt(MAX_PROFILESETS);
 const GREEN_THRESHOLD_BIG = BigInt(COUNT_THRESHOLDS.green);
 
-const MAGNITUDE_LABELS: [bigint, string][] = [
-  [1_000_000_000_000_000n, "Quadrillions"],
-  [1_000_000_000_000n, "Trillions"],
-  [1_000_000_000n, "Billions"],
-  [1_000_000n, "Millions"],
-  [100_000n, "Thousands"],
+const SI_SUFFIXES: [bigint, string][] = [
+  [1_000_000_000_000_000n, "Q"],
+  [1_000_000_000_000n, "T"],
+  [1_000_000_000n, "B"],
+  [1_000_000n, "M"],
+  [1_000n, "K"],
 ];
 
 function formatCount(n: bigint): string {
-  for (const [threshold, label] of MAGNITUDE_LABELS) {
-    if (n >= threshold) return `${label} of builds`;
+  for (const [threshold, suffix] of SI_SUFFIXES) {
+    if (n >= threshold) {
+      const whole = n / threshold;
+      const remainder = ((n % threshold) * 10n) / threshold;
+      return remainder > 0n
+        ? `${whole}.${remainder}${suffix}`
+        : `${whole}${suffix}`;
+    }
   }
   return n.toLocaleString();
 }
@@ -72,7 +78,8 @@ export class CombinationCounter {
     const warnings = this.collectWarnings(counts);
     this.showWarnings(warnings);
 
-    this.countEl.textContent = formatCount(total);
+    const countText = total === 0n ? "0" : formatCount(total);
+    this.countEl.textContent = `${countText} builds`;
     this.countEl.className = "count-value";
 
     let color: string;
@@ -81,11 +88,11 @@ export class CombinationCounter {
     if (total === 0n) {
       color = "red";
       if (warnings.length === 0 && !state.hasValidationError) {
-        warning = "No valid builds \u2014 check constraints";
+        warning = "Check constraints";
       }
     } else if (total > MAX_PROFILESETS_BIG) {
       color = "red";
-      warning = `Exceeds Raidbots limit of ${MAX_PROFILESETS.toLocaleString()}. Add more constraints.`;
+      warning = `Over ${MAX_PROFILESETS.toLocaleString()} limit`;
     } else if (total > GREEN_THRESHOLD_BIG) {
       color = "yellow";
     } else {
@@ -96,11 +103,11 @@ export class CombinationCounter {
     this.warningEl.textContent = warning;
 
     const parts = [
-      `Class: ${formatCount(counts.classCount)}`,
-      `Spec: ${formatCount(counts.specCount)}`,
+      formatCount(counts.classCount),
+      formatCount(counts.specCount),
     ];
     if (counts.heroCount > 0n || state.activeHeroTree) {
-      parts.push(`Hero: ${formatCount(counts.heroCount)}`);
+      parts.push(formatCount(counts.heroCount));
     }
     this.breakdownEl.textContent = parts.join(" \u00d7 ");
   }
