@@ -255,7 +255,11 @@ export class TalentNodeView {
     return poly;
   }
 
-  setState(nodeState: NodeState, constraint?: Constraint): void {
+  setState(
+    nodeState: NodeState,
+    constraint?: Constraint,
+    hasError?: boolean,
+  ): void {
     this.group.classList.remove(
       "locked",
       "available",
@@ -265,6 +269,7 @@ export class TalentNodeView {
       "implied",
     );
     this.group.classList.add(nodeState);
+    this.group.classList.toggle("error", !!hasError);
     this.conditionBadge.style.display =
       nodeState === "conditional" ? "" : "none";
 

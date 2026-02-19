@@ -158,6 +158,13 @@
   fill: var(--color-amber-dim);
 }
 
+/* Error overlay — pulsing red outline on problem nodes */
+.talent-node.error .node-bg {
+  stroke: var(--color-red);
+  stroke-width: 3;
+  filter: drop-shadow(0 0 4px var(--color-red));
+}
+
 /* Rank badge — prominent pill */
 .rank-pill-bg {
   fill: var(--bg-tertiary);

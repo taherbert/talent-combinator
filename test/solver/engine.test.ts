@@ -143,11 +143,11 @@ describe("countTreeBuilds", () => {
     expect(countTreeBuilds(tree, constraints).count).toBe(1n);
   });
 
-  it("does not charge entry nodes against budget", () => {
+  it("charges entry nodes against budget", () => {
     const entry = makeNode(1, { entryNode: true, row: 0 });
     const child = makeNode(2, { row: 1, prev: [1], entryNode: false });
     entry.next = [2];
-    const tree = makeTree([entry, child], { pointBudget: 1 });
+    const tree = makeTree([entry, child], { pointBudget: 2 });
     const constraints = new Map<number, Constraint>([
       [1, { nodeId: 1, type: "always" }],
       [2, { nodeId: 2, type: "always" }],
@@ -291,7 +291,7 @@ describe("countTreeBuilds warnings", () => {
     expect(result.count).toBe(0n);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0].severity).toBe("error");
-    expect(result.warnings[0].message).toContain("unreachable");
+    expect(result.warnings[0].message).toContain("can't be reached");
   });
 
   it("warns when mandatory talents exceed budget", () => {

@@ -52,6 +52,9 @@ export class TalentTreeView {
           this.renderTooltip(this.hoveredNode, this.lastHoverEvent);
         }
       }
+      if (event.type === "count-updated") {
+        this.updateNodeStates();
+      }
     });
   }
 
@@ -189,6 +192,8 @@ export class TalentTreeView {
   }
 
   private handleClick(node: TalentNode, event: MouseEvent): void {
+    if (node.freeNode) return; // Free nodes are always granted, not interactive
+
     // Multi-rank or choice nodes get a popover
     const hasDistinctChoices =
       node.type === "choice" &&
@@ -495,14 +500,18 @@ export class TalentTreeView {
     if (!this.tree) return;
 
     for (const [nodeId, view] of this.nodeViews) {
+      const node = this.tree.nodes.get(nodeId)!;
       const constraint = state.constraints.get(nodeId);
       let nodeState: NodeState;
-      if (constraint?.type === "always" && state.isImplied(nodeId)) {
+      if (node.freeNode) {
+        nodeState = "implied"; // Free nodes are always granted
+      } else if (constraint?.type === "always" && state.isImplied(nodeId)) {
         nodeState = "implied";
       } else {
         nodeState = constraint?.type ?? "available";
       }
-      view.setState(nodeState, constraint);
+      const hasError = state.warningNodeIds.has(nodeId);
+      view.setState(nodeState, constraint, hasError);
     }
   }
 
@@ -547,15 +556,16 @@ export class TalentTreeView {
     for (const node of this.tree.nodes.values()) {
       const constraint = state.constraints.get(node.id);
       if (!constraint) continue;
-      if (constraint.type === "always") always++;
-      else if (constraint.type === "never") never++;
-      else if (constraint.type === "conditional") conditional++;
+      const cost = node.freeNode ? 0 : (constraint.exactRank ?? node.maxRanks);
+      if (constraint.type === "always") always += cost;
+      else if (constraint.type === "never") never += cost;
+      else if (constraint.type === "conditional") conditional += cost;
     }
 
     const parts: string[] = [];
-    if (always > 0) parts.push(`${always} required`);
-    if (never > 0) parts.push(`${never} blocked`);
-    if (conditional > 0) parts.push(`${conditional} conditional`);
+    if (always > 0) parts.push(`${always} pts required`);
+    if (never > 0) parts.push(`${never} pts blocked`);
+    if (conditional > 0) parts.push(`${conditional} pts conditional`);
 
     this.summaryEl.textContent = parts.length > 0 ? parts.join(", ") : "";
   }

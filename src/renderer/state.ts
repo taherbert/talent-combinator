@@ -22,6 +22,7 @@ class AppState {
   };
   private _impliedBy = new Map<number, Set<number>>();
   private _userOwned = new Set<number>();
+  private _warningNodeIds = new Set<number>();
 
   get specs(): Specialization[] {
     return this._specs;
@@ -37,6 +38,9 @@ class AppState {
   }
   get counts(): TreeCounts {
     return this._counts;
+  }
+  get warningNodeIds(): Set<number> {
+    return this._warningNodeIds;
   }
   subscribe(listener: Listener): () => void {
     this.listeners.push(listener);
@@ -63,6 +67,7 @@ class AppState {
     this._constraints.clear();
     this._impliedBy.clear();
     this._userOwned.clear();
+    this._warningNodeIds.clear();
     this.emit({ type: "spec-selected", spec });
   }
 
@@ -109,6 +114,18 @@ class AppState {
 
   updateCounts(counts: TreeCounts): void {
     this._counts = counts;
+    this._warningNodeIds.clear();
+    const details = counts.details;
+    if (details) {
+      for (const result of [details.class, details.spec, details.hero]) {
+        if (!result) continue;
+        for (const w of result.warnings) {
+          if (w.nodeIds) {
+            for (const id of w.nodeIds) this._warningNodeIds.add(id);
+          }
+        }
+      }
+    }
     this.emit({ type: "count-updated", counts });
   }
 
