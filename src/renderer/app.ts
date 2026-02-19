@@ -625,17 +625,22 @@ async function importTalentHash(): Promise<void> {
   }
 
   // Apply always constraints for selected current-spec talent nodes.
-  // Skip: subTree/system IDs, other specs' nodes, and spec-granted free nodes
-  // (isPurchased=0) which don't cost talent points.
+  // Skip: subTree/system IDs, other specs' nodes, and truly free nodes
+  // (freeNode nodes cost zero points and are always taken).
   for (const sel of selections) {
     if (subTreeAndSystemIds.has(sel.nodeId)) continue;
     if (!currentSpecTalentIds.has(sel.nodeId)) continue;
-    if (sel.free) continue;
 
+    const node = allNodeMap.get(sel.nodeId);
+    // Granted selections on choice nodes don't encode entryIndex in the hash;
+    // default to entry 0 so the constraint pins the choice.
+    const entryIndex =
+      sel.entryIndex ?? (sel.free && node?.type === "choice" ? 0 : undefined);
     const constraint: Constraint = {
       nodeId: sel.nodeId,
       type: "always",
-      entryIndex: sel.entryIndex,
+      entryIndex,
+      exactRank: sel.ranks,
     };
     state.setConstraint(constraint);
   }

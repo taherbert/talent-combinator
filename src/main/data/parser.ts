@@ -53,7 +53,12 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
       id: raw.id,
       name: nodeName(raw),
       icon: raw.icon || raw.entries[0]?.icon || "",
-      type: raw.entries.length > 1 ? "choice" : "single",
+      type:
+        raw.type === "tiered"
+          ? "single"
+          : raw.entries.length > 1
+            ? "choice"
+            : "single",
       maxRanks: raw.maxRanks,
       entries: raw.entries.map(parseEntry),
       next: raw.next ?? [],
@@ -211,10 +216,8 @@ export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
       .filter((stn) => stn.id != null && stn.entries?.length)
       .map((stn) => ({
         id: stn.id,
-        // Descending by entry id matches the game's entryIDs ordering
-        entries: [...stn.entries]
-          .sort((a, b) => b.id - a.id)
-          .map((e) => ({ traitSubTreeId: e.traitSubTreeId })),
+        // Preserve raw order — matches the game's entryIDs ordering in the hash
+        entries: stn.entries.map((e) => ({ traitSubTreeId: e.traitSubTreeId })),
       }));
 
     // Collect node IDs that fail isValidNode (entryNode/freeNode with no name/entries)
