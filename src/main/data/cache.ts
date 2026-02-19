@@ -22,14 +22,16 @@ function getCachePath(): string {
   return join(getCacheDir(), "talents.json");
 }
 
-export function readCache(): RawSpecData[] | null {
+export function readCache(ignoreTTL = false): RawSpecData[] | null {
   const path = getCachePath();
   if (!existsSync(path)) return null;
 
   try {
-    const stat = statSync(path);
-    const age = Date.now() - stat.mtimeMs;
-    if (age > CACHE_TTL_MS) return null;
+    if (!ignoreTTL) {
+      const stat = statSync(path);
+      const age = Date.now() - stat.mtimeMs;
+      if (age > CACHE_TTL_MS) return null;
+    }
 
     const content = readFileSync(path, "utf-8");
     return JSON.parse(content) as RawSpecData[];

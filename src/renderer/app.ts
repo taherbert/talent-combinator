@@ -5,6 +5,7 @@ import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
 import { countTreeBuilds } from "../shared/build-counter";
 import { decodeTalentHash } from "./hash-decoder";
+import { buildAllNodesForSpec } from "./hash-encoder";
 import type {
   Constraint,
   CountResult,
@@ -621,49 +622,16 @@ async function importTalentHash(): Promise<void> {
     if (!ok) return;
   }
 
-  // The hash encodes ALL nodes the game returns from C_Traits.GetTreeNodes —
-  // class nodes, every spec's spec/hero nodes (including other specs of the
-  // same class), and subTree selection nodes. Nodes from other specs are
-  // always encoded as unselected (0), but still consume 1 bit each. Missing
-  // them causes cascading misalignment for all higher-ID nodes.
-  function makeStub(id: number): TalentNode {
-    return {
-      id,
-      name: "",
-      icon: "",
-      type: "single" as const,
-      maxRanks: 1,
-      entries: [],
-      next: [],
-      prev: [],
-      reqPoints: 0,
-      row: 0,
-      col: 0,
-      freeNode: true,
-      entryNode: true,
-      isApex: false,
-    };
-  }
-
   const sameClassSpecs = state.specs.filter(
     (s) => s.className === targetSpec.className,
   );
-  const allNodeMap = new Map<number, TalentNode>();
-  for (const s of sameClassSpecs) {
-    for (const node of s.classTree.nodes.values())
-      allNodeMap.set(node.id, node);
-    for (const node of s.specTree.nodes.values()) allNodeMap.set(node.id, node);
-    for (const heroTree of s.heroTrees)
-      for (const node of heroTree.nodes.values()) allNodeMap.set(node.id, node);
-    for (const stn of s.subTreeNodes) allNodeMap.set(stn.id, makeStub(stn.id));
-    for (const sid of s.systemNodeIds) allNodeMap.set(sid, makeStub(sid));
-  }
-
-  const allNodes: TalentNode[] = [...allNodeMap.values()];
+  const { allNodes, allNodeMap } = buildAllNodesForSpec(sameClassSpecs);
 
   const decoded = decodeTalentHash(hashStr, allNodes);
   if (!decoded?.selections.length) return;
   const { selections } = decoded;
+
+  state.setTreeHash(specId, decoded.treeHashBytes);
 
   const subTreeAndSystemIds = new Set([
     ...sameClassSpecs.flatMap((s) => s.subTreeNodes.map((n) => n.id)),

@@ -105,16 +105,27 @@ function fetchTooltip(spellId: number): Promise<SpellTooltip | null> {
 
 export function registerIPC(): void {
   ipcMain.handle("fetch-talent-data", async (): Promise<TalentDataResult> => {
-    const cached = readCache();
-    const isCached = cached !== null;
-    const raw = cached ?? (await fetchTalentJSON());
-    if (!isCached) writeCache(raw);
-
-    return {
-      specs: parseSpecializations(raw),
-      version: "live",
-      cached: isCached,
-    };
+    try {
+      const raw = await fetchTalentJSON();
+      writeCache(raw);
+      return {
+        specs: parseSpecializations(raw),
+        version: "live",
+        cached: false,
+      };
+    } catch {
+      const cached = readCache(true);
+      if (cached) {
+        return {
+          specs: parseSpecializations(cached),
+          version: "live",
+          cached: true,
+        };
+      }
+      throw new Error(
+        "Failed to fetch talent data and no cached data available",
+      );
+    }
   });
 
   ipcMain.handle(
@@ -130,10 +141,15 @@ export function registerIPC(): void {
       const win = BrowserWindow.getFocusedWindow();
       if (!win) return false;
 
+      const ext = defaultName.split(".").pop() ?? "simc";
+      const filterNames: Record<string, string> = {
+        simc: "SimC Profile",
+        txt: "Text File",
+      };
       const result = await dialog.showSaveDialog(win, {
         defaultPath: defaultName,
         filters: [
-          { name: "SimC Profile", extensions: ["simc"] },
+          { name: filterNames[ext] ?? "File", extensions: [ext] },
           { name: "All Files", extensions: ["*"] },
         ],
       });
