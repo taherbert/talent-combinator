@@ -2,6 +2,7 @@ import { state } from "../state";
 import { TalentNodeView } from "./talent-node";
 import { ConditionEditor } from "./condition-editor";
 import { addDismissHandler } from "./dismiss";
+import { clampToViewport } from "./clamp";
 import type {
   TalentTree,
   TalentNode,
@@ -128,7 +129,7 @@ export class TalentTreeView {
       const label = `${gate.requiredPoints} pts`;
       const labelText = document.createElementNS(SVG_NS, "text");
       labelText.classList.add("tier-gate-label");
-      labelText.setAttribute("x", String(width - 6));
+      labelText.setAttribute("x", "6");
       labelText.setAttribute("y", String(y - 4));
       labelText.textContent = label;
       gateGroup.appendChild(labelText);
@@ -194,15 +195,18 @@ export class TalentTreeView {
   }
 
   private handleClick(node: TalentNode, event: MouseEvent): void {
-    if (node.freeNode) return; // Free nodes are always granted, not interactive
-
-    // During validation error: only allow clearing existing constraints
+    // During validation error: any node with a constraint can be cleared
     if (state.hasValidationError) {
       if (state.constraints.has(node.id)) {
         state.removeConstraint(node.id);
       }
       return;
     }
+
+    if (node.freeNode) return;
+    const isHeroNonChoice =
+      this.tree?.type === "hero" && !(node.type === "choice" && !node.isApex);
+    if (isHeroNonChoice) return;
 
     // Multi-rank or choice nodes get a popover
     const hasDistinctChoices =
@@ -336,23 +340,7 @@ export class TalentTreeView {
     document.getElementById("dialog-container")!.appendChild(popover);
     this.rankPopover = popover;
 
-    // Clamp to viewport
-    requestAnimationFrame(() => {
-      const rect = popover.getBoundingClientRect();
-      const margin = 8;
-      let left = rect.left;
-      let top = rect.top;
-      if (rect.right > window.innerWidth - margin) {
-        left = window.innerWidth - margin - rect.width;
-      }
-      if (rect.bottom > window.innerHeight - margin) {
-        top = window.innerHeight - margin - rect.height;
-      }
-      if (left < margin) left = margin;
-      if (top < margin) top = margin;
-      popover.style.left = `${left}px`;
-      popover.style.top = `${top}px`;
-    });
+    requestAnimationFrame(() => clampToViewport(popover));
 
     addDismissHandler(popover, () => this.closeRankPopover());
   }
@@ -366,7 +354,7 @@ export class TalentTreeView {
 
   private handleContextMenu(node: TalentNode, event: MouseEvent): void {
     if (!this.tree || state.hasValidationError) return;
-    this.conditionEditor.open(node, this.tree, event.clientX, event.clientY);
+    this.conditionEditor.open(node, this.tree);
   }
 
   private handleHover(
@@ -486,11 +474,21 @@ export class TalentTreeView {
     let top = event.clientY + pad;
     requestAnimationFrame(() => {
       const rect = tooltip.getBoundingClientRect();
+      // Flip to opposite side of cursor if overflowing
       if (rect.bottom > window.innerHeight) {
         top = event.clientY - rect.height - pad;
       }
       if (rect.right > window.innerWidth) {
         left = event.clientX - rect.width - pad;
+      }
+      // Final clamp to ensure it stays in viewport
+      if (left < 0) left = 0;
+      if (top < 0) top = 0;
+      if (left + rect.width > window.innerWidth) {
+        left = window.innerWidth - rect.width;
+      }
+      if (top + rect.height > window.innerHeight) {
+        top = window.innerHeight - rect.height;
       }
       tooltip.style.left = `${left}px`;
       tooltip.style.top = `${top}px`;
@@ -519,8 +517,12 @@ export class TalentTreeView {
     for (const [nodeId, view] of this.nodeViews) {
       const node = this.tree.nodes.get(nodeId)!;
       const constraint = state.constraints.get(nodeId);
+      const isHeroNonChoice =
+        this.tree.type === "hero" && !(node.type === "choice" && !node.isApex);
       let nodeState: NodeState;
       if (node.freeNode && !constraint) {
+        nodeState = "free";
+      } else if (isHeroNonChoice && constraint?.type === "always") {
         nodeState = "free";
       } else if (constraint?.type === "always" && state.isImplied(nodeId)) {
         nodeState = "implied";
@@ -573,6 +575,9 @@ export class TalentTreeView {
     for (const node of this.tree.nodes.values()) {
       const constraint = state.constraints.get(node.id);
       if (!constraint) continue;
+      const isHeroNonChoice =
+        this.tree!.type === "hero" && !(node.type === "choice" && !node.isApex);
+      if (isHeroNonChoice && constraint.type === "always") continue;
       const cost = node.freeNode ? 0 : (constraint.exactRank ?? node.maxRanks);
       if (constraint.type === "always") always += cost;
       else if (constraint.type === "never") never += cost;

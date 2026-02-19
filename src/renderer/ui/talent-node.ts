@@ -190,9 +190,23 @@ export class TalentNodeView {
     const probe = new Image();
     probe.onload = () => {
       this.iconUrls.set(entryIndex, url);
-      // Show default icon on first successful load
       if (!this.iconEl && (entryIndex === -1 || !this.iconUrls.has(-1))) {
         this.showIcon(url);
+      }
+    };
+    probe.onerror = () => {
+      // Try replacing __ with -_ (Raidbots data encoding quirk)
+      if (normalized.includes("__")) {
+        const alt = normalized.replace(/__/g, "-_");
+        const altUrl = `${ICON_CDN_URL}/${alt}.jpg`;
+        const retry = new Image();
+        retry.onload = () => {
+          this.iconUrls.set(entryIndex, altUrl);
+          if (!this.iconEl && (entryIndex === -1 || !this.iconUrls.has(-1))) {
+            this.showIcon(altUrl);
+          }
+        };
+        retry.src = altUrl;
       }
     };
     probe.src = url;

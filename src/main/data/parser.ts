@@ -30,16 +30,26 @@ function isValidNode(raw: RawTalentNode): boolean {
 }
 
 function nodeName(raw: RawTalentNode): string {
-  return raw.name || raw.entries[0]?.name || `Node ${raw.id}`;
+  if (raw.name) {
+    const parts = raw.name.split(" / ");
+    if (parts.length > 1 && parts.every((p) => p === parts[0])) {
+      return parts[0];
+    }
+    return raw.name;
+  }
+  return raw.entries[0]?.name || `Node ${raw.id}`;
 }
 
-function normalizeRows(nodes: Map<number, TalentNode>): void {
-  const uniqueRows = [...new Set([...nodes.values()].map((n) => n.row))].sort(
+function normalizeAxis(
+  nodes: Map<number, TalentNode>,
+  axis: "row" | "col",
+): void {
+  const unique = [...new Set([...nodes.values()].map((n) => n[axis]))].sort(
     (a, b) => a - b,
   );
-  const rowMap = new Map(uniqueRows.map((r, i) => [r, i]));
+  const map = new Map(unique.map((v, i) => [v, i]));
   for (const node of nodes.values()) {
-    node.row = rowMap.get(node.row)!;
+    node[axis] = map.get(node[axis])!;
   }
 }
 
@@ -73,7 +83,8 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
     });
   }
 
-  normalizeRows(nodes);
+  normalizeAxis(nodes, "row");
+  normalizeAxis(nodes, "col");
 
   // Keep only top-down (forward) connections and supplement reverse edges
   for (const node of nodes.values()) {

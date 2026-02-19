@@ -87,15 +87,20 @@
 }
 
 .sidebar-backdrop {
-  display: none;
   position: fixed;
   inset: 0;
   z-index: 50;
   background: var(--bg-overlay);
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity var(--transition-normal),
+    visibility var(--transition-normal);
 }
 
 .sidebar-backdrop.visible {
-  display: block;
+  visibility: visible;
+  opacity: 1;
 }
 
 .main-content {
@@ -207,11 +212,8 @@
   display: none;
 }
 
-.tree-constraint-summary:empty {
-  display: none;
-}
-
 .tree-constraint-summary {
+  min-height: 25px;
   text-align: center;
   padding: 4px 12px;
   font-size: 11px;
