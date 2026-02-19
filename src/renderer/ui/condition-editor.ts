@@ -1,26 +1,25 @@
 import { state } from "../state";
-import { addDismissHandler } from "./dismiss";
-import type { TalentNode, TalentTree, BooleanExpr } from "../../shared/types";
+import type { BooleanExpr, TalentNode, TalentTree } from "../../shared/types";
 
-interface Clause {
-  talents: { nodeId: number; name: string }[];
-  groupOp: "AND" | "OR";
+interface TalentRef {
+  nodeId: number;
+  name: string;
+}
+
+interface RuleGroup {
+  talents: TalentRef[];
 }
 
 export class ConditionEditor {
   private panel: HTMLElement | null = null;
   private currentNode: TalentNode | null = null;
   private currentTree: TalentTree | null = null;
-  private clauses: Clause[] = [];
-  private operators: ("AND" | "OR")[] = [];
-  private dragSourceIndex = -1;
+  private groups: RuleGroup[] = [];
+  private mode: "any" | "all" = "any";
+  private targetGroupIndex: number | null = null;
+  private keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-  open(
-    node: TalentNode,
-    tree: TalentTree,
-    anchorX: number,
-    anchorY: number,
-  ): void {
+  open(node: TalentNode, tree: TalentTree): void {
     this.close();
     this.currentNode = node;
     this.currentTree = tree;
@@ -29,115 +28,112 @@ export class ConditionEditor {
     if (existing?.type === "conditional" && existing.condition) {
       this.loadCondition(existing.condition);
     } else {
-      this.clauses = [];
-      this.operators = [];
+      this.groups = [];
+      this.mode = "any";
     }
 
-    this.panel = document.createElement("div");
-    this.panel.className = "cond-panel";
-    this.panel.style.left = `${anchorX}px`;
-    this.panel.style.top = `${anchorY}px`;
+    const overlay = document.createElement("div");
+    overlay.className = "cond-overlay";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) this.close();
+    });
 
+    const dialog = document.createElement("div");
+    dialog.className = "cond-dialog";
+    overlay.appendChild(dialog);
+
+    this.panel = overlay;
     this.render();
-    document.getElementById("dialog-container")!.appendChild(this.panel);
+    document.getElementById("dialog-container")!.appendChild(overlay);
 
-    requestAnimationFrame(() => this.clampPosition());
+    this.keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") this.close();
+    };
+    document.addEventListener("keydown", this.keyHandler);
 
-    addDismissHandler(this.panel, () => this.close());
+    requestAnimationFrame(() => {
+      overlay.querySelector<HTMLInputElement>(".cond-search-input")?.focus();
+    });
   }
 
   close(): void {
+    if (this.keyHandler) {
+      document.removeEventListener("keydown", this.keyHandler);
+      this.keyHandler = null;
+    }
     if (this.panel) {
       this.panel.remove();
       this.panel = null;
     }
   }
 
-  private clampPosition(): void {
-    if (!this.panel) return;
-    const rect = this.panel.getBoundingClientRect();
-    const margin = 8;
-    let left = rect.left;
-    let top = rect.top;
-    if (rect.right > window.innerWidth - margin) {
-      left = window.innerWidth - margin - rect.width;
-    }
-    if (rect.bottom > window.innerHeight - margin) {
-      top = window.innerHeight - margin - rect.height;
-    }
-    if (left < margin) left = margin;
-    if (top < margin) top = margin;
-    this.panel.style.left = `${left}px`;
-    this.panel.style.top = `${top}px`;
-  }
-
-  // --- Load / Save helpers ---
-
-  private isLeafOrGroup(expr: BooleanExpr): boolean {
-    if (expr.op === "TALENT_SELECTED") return true;
-    return expr.children.every((c) => c.op === "TALENT_SELECTED");
-  }
-
-  private exprToClause(expr: BooleanExpr): Clause {
-    if (expr.op === "TALENT_SELECTED") {
-      return {
-        talents: [
-          { nodeId: expr.nodeId, name: this.findNodeName(expr.nodeId) },
-        ],
-        groupOp: "AND",
-      };
-    }
-    return {
-      talents: expr.children
-        .filter(
-          (c): c is BooleanExpr & { op: "TALENT_SELECTED" } =>
-            c.op === "TALENT_SELECTED",
-        )
-        .map((c) => ({
-          nodeId: c.nodeId,
-          name: this.findNodeName(c.nodeId),
-        })),
-      groupOp: expr.op,
-    };
-  }
+  // --- Load / Save conversion ---
 
   private loadCondition(expr: BooleanExpr): void {
-    this.clauses = [];
-    this.operators = [];
+    this.groups = [];
+    this.mode = "any";
 
     if (expr.op === "TALENT_SELECTED") {
-      this.clauses.push(this.exprToClause(expr));
+      this.groups.push({ talents: [this.refFromExpr(expr)] });
       return;
     }
 
-    if (expr.op === "AND") {
-      for (const child of expr.children) {
-        if (this.clauses.length > 0) this.operators.push("AND");
-        this.clauses.push(this.exprToClause(child));
-      }
+    if (expr.op === "OR") {
+      // DNF: OR of ANDs or leaves → "any" mode
+      this.mode = "any";
+      this.loadGroupChildren(expr.children);
       return;
     }
 
-    // OR: flatten AND children whose children are all leaf/group
-    for (const child of expr.children) {
-      if (
-        child.op === "AND" &&
-        child.children.every((gc) => this.isLeafOrGroup(gc))
+    // AND
+    if (expr.children.every((c) => c.op === "TALENT_SELECTED")) {
+      // Simple AND of leaves → "any" mode, one group
+      this.groups.push({
+        talents: expr.children.map((c) => this.refFromExpr(c)),
+      });
+      return;
+    }
+
+    if (expr.children.some((c) => c.op === "OR")) {
+      // AND of ORs → CNF → "all" mode
+      this.mode = "all";
+      this.loadGroupChildren(expr.children);
+      return;
+    }
+
+    // AND of mixed non-OR — fallback to single group
+    this.groups.push({ talents: this.collectLeaves(expr) });
+  }
+
+  private loadGroupChildren(children: BooleanExpr[]): void {
+    const innerOp = this.mode === "any" ? "AND" : "OR";
+    for (const child of children) {
+      if (child.op === "TALENT_SELECTED") {
+        this.groups.push({ talents: [this.refFromExpr(child)] });
+      } else if (
+        child.op === innerOp &&
+        child.children.every((c) => c.op === "TALENT_SELECTED")
       ) {
-        for (let j = 0; j < child.children.length; j++) {
-          if (this.clauses.length > 0) {
-            this.operators.push(j === 0 ? "OR" : "AND");
-          }
-          this.clauses.push(this.exprToClause(child.children[j]));
-        }
-      } else if (this.isLeafOrGroup(child)) {
-        if (this.clauses.length > 0) this.operators.push("OR");
-        this.clauses.push(this.exprToClause(child));
+        this.groups.push({
+          talents: child.children.map((c) => this.refFromExpr(c)),
+        });
       } else {
-        if (this.clauses.length > 0) this.operators.push("OR");
-        this.clauses.push(this.exprToClause(child));
+        const leaves = this.collectLeaves(child);
+        if (leaves.length > 0) {
+          this.groups.push({ talents: leaves });
+        }
       }
     }
+  }
+
+  private refFromExpr(expr: BooleanExpr): TalentRef {
+    if (expr.op !== "TALENT_SELECTED") return { nodeId: 0, name: "Unknown" };
+    return { nodeId: expr.nodeId, name: this.findNodeName(expr.nodeId) };
+  }
+
+  private collectLeaves(expr: BooleanExpr): TalentRef[] {
+    if (expr.op === "TALENT_SELECTED") return [this.refFromExpr(expr)];
+    return expr.children.flatMap((c) => this.collectLeaves(c));
   }
 
   private findNodeName(nodeId: number): string {
@@ -154,11 +150,12 @@ export class ConditionEditor {
 
   private render(): void {
     if (!this.panel || !this.currentNode) return;
-    this.panel.innerHTML = "";
+    const target = this.panel.querySelector(".cond-dialog") ?? this.panel;
+    target.innerHTML = "";
 
-    this.panel.appendChild(this.buildHeader());
-    this.panel.appendChild(this.buildBody());
-    this.panel.appendChild(this.buildFooter());
+    target.appendChild(this.buildHeader());
+    target.appendChild(this.buildBody());
+    target.appendChild(this.buildFooter());
   }
 
   private buildHeader(): HTMLElement {
@@ -184,87 +181,117 @@ export class ConditionEditor {
     const body = document.createElement("div");
     body.className = "cond-body";
 
+    body.appendChild(this.buildSearchSection());
+
     const sentence = document.createElement("div");
     sentence.className = "cond-sentence";
     sentence.textContent = "Include this talent when:";
     body.appendChild(sentence);
 
-    if (this.clauses.length === 0) {
+    if (this.groups.length > 0) {
+      body.appendChild(this.buildModeToggle());
+    }
+
+    const conditions = document.createElement("div");
+    conditions.className = "cond-conditions";
+
+    if (this.groups.length === 0) {
       const empty = document.createElement("div");
       empty.className = "cond-empty";
       empty.textContent =
-        "No conditions set. Search for a talent below to add one.";
-      body.appendChild(empty);
+        "No conditions set. Search for a talent above to add one.";
+      conditions.appendChild(empty);
     } else {
-      const list = document.createElement("div");
-      list.className = "cond-clause-list";
+      const outerOp = this.mode === "any" ? "OR" : "AND";
 
-      for (let ci = 0; ci < this.clauses.length; ci++) {
-        if (ci > 0) {
-          list.appendChild(this.buildOpSeparator(ci - 1));
+      for (let gi = 0; gi < this.groups.length; gi++) {
+        if (gi > 0) {
+          const sep = document.createElement("div");
+          sep.className = "cond-or-sep";
+          const badge = document.createElement("span");
+          badge.textContent = outerOp;
+          sep.appendChild(badge);
+          conditions.appendChild(sep);
         }
-        list.appendChild(this.buildClauseRow(ci));
+        conditions.appendChild(this.buildGroupCard(gi));
       }
 
-      body.appendChild(list);
+      const addGroupBtn = document.createElement("button");
+      addGroupBtn.className = "cond-add-group";
+      addGroupBtn.textContent = `+ ${outerOp} group`;
+      addGroupBtn.addEventListener("click", () => {
+        this.groups.push({ talents: [] });
+        this.targetGroupIndex = this.groups.length - 1;
+        this.render();
+        requestAnimationFrame(() => {
+          this.panel
+            ?.querySelector<HTMLInputElement>(".cond-search-input")
+            ?.focus();
+        });
+      });
+      conditions.appendChild(addGroupBtn);
     }
 
-    body.appendChild(this.buildSearchSection());
-
+    body.appendChild(conditions);
     return body;
   }
 
-  private buildOpSeparator(operatorIndex: number): HTMLElement {
-    const op = this.operators[operatorIndex];
-    const sep = document.createElement("div");
-    sep.className = "cond-op-sep";
+  private buildModeToggle(): HTMLElement {
+    const toggle = document.createElement("div");
+    toggle.className = "cond-mode-toggle";
 
-    const btn = document.createElement("button");
-    btn.className = `cond-op-btn ${op.toLowerCase()}`;
-    btn.textContent = op;
-    btn.title = `Click to switch to ${op === "AND" ? "OR" : "AND"}`;
-    btn.addEventListener("click", () => {
-      this.operators[operatorIndex] = op === "AND" ? "OR" : "AND";
-      this.render();
-    });
-    sep.appendChild(btn);
+    const modes: [typeof this.mode, string][] = [
+      ["any", "Any group matches"],
+      ["all", "All groups match"],
+    ];
 
-    return sep;
-  }
-
-  private buildClauseRow(clauseIndex: number): HTMLElement {
-    const clause = this.clauses[clauseIndex];
-    const row = document.createElement("div");
-    row.className = "cond-clause";
-    row.draggable = true;
-    row.dataset.clauseIndex = String(clauseIndex);
-
-    // Drag handle
-    const handle = document.createElement("span");
-    handle.className = "cond-drag-handle";
-    handle.textContent = "\u2807";
-    row.appendChild(handle);
-
-    const isGroup = clause.talents.length > 1;
-
-    if (isGroup) {
-      row.classList.add("cond-clause-group");
+    for (const [value, label] of modes) {
+      const btn = document.createElement("button");
+      btn.className = `cond-mode-btn${this.mode === value ? " active" : ""}`;
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        if (this.mode !== value) {
+          this.mode = value;
+          this.render();
+        }
+      });
+      toggle.appendChild(btn);
     }
 
-    for (let ti = 0; ti < clause.talents.length; ti++) {
+    return toggle;
+  }
+
+  private buildGroupCard(gi: number): HTMLElement {
+    const group = this.groups[gi];
+    const card = document.createElement("div");
+    card.className = "cond-group-card";
+
+    // Delete group button (top-right)
+    if (this.groups.length > 1 || group.talents.length > 1) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "cond-group-delete";
+      deleteBtn.textContent = "\u00d7";
+      deleteBtn.title = "Remove group";
+      deleteBtn.addEventListener("click", () => {
+        this.groups.splice(gi, 1);
+        this.render();
+      });
+      card.appendChild(deleteBtn);
+    }
+
+    // Talent items
+    for (let ti = 0; ti < group.talents.length; ti++) {
+      const talent = group.talents[ti];
+      const item = document.createElement("div");
+      item.className = "cond-item";
+
       if (ti > 0) {
-        const innerOpBtn = document.createElement("button");
-        innerOpBtn.className = `cond-inner-op ${clause.groupOp.toLowerCase()}`;
-        innerOpBtn.textContent = clause.groupOp;
-        innerOpBtn.title = `Click to switch to ${clause.groupOp === "AND" ? "OR" : "AND"}`;
-        innerOpBtn.addEventListener("click", () => {
-          clause.groupOp = clause.groupOp === "AND" ? "OR" : "AND";
-          this.render();
-        });
-        row.appendChild(innerOpBtn);
+        const innerLabel = document.createElement("span");
+        innerLabel.className = "cond-inner-label";
+        innerLabel.textContent = this.mode === "any" ? "and" : "or";
+        card.appendChild(innerLabel);
       }
 
-      const talent = clause.talents[ti];
       const chip = document.createElement("span");
       chip.className = "cond-chip";
 
@@ -278,96 +305,35 @@ export class ConditionEditor {
       removeBtn.textContent = "\u00d7";
       removeBtn.title = `Remove ${talent.name}`;
       removeBtn.addEventListener("click", () => {
-        clause.talents.splice(ti, 1);
-        if (clause.talents.length === 0) {
-          this.clauses.splice(clauseIndex, 1);
-          if (this.operators.length > 0) {
-            const opIdx = clauseIndex === 0 ? 0 : clauseIndex - 1;
-            this.operators.splice(opIdx, 1);
-          }
+        group.talents.splice(ti, 1);
+        // Auto-remove empty groups
+        if (group.talents.length === 0) {
+          this.groups.splice(gi, 1);
         }
         this.render();
       });
       chip.appendChild(removeBtn);
 
-      row.appendChild(chip);
+      item.appendChild(chip);
+      card.appendChild(item);
     }
 
-    if (isGroup) {
-      const addAlt = document.createElement("button");
-      addAlt.className = "cond-add-alt";
-      addAlt.textContent = `+ ${clause.groupOp}`;
-      addAlt.title = `Add ${clause.groupOp} alternative to this group`;
-      addAlt.addEventListener("click", () => {
-        this.showInlineSearch(addAlt, (nodeId, name) => {
-          clause.talents.push({ nodeId, name });
-          this.render();
-        });
+    // "+ Add condition" button
+    const addBtn = document.createElement("button");
+    addBtn.className = "cond-add-condition";
+    addBtn.textContent = "+ Add condition";
+    addBtn.addEventListener("click", () => {
+      this.targetGroupIndex = gi;
+      this.render();
+      requestAnimationFrame(() => {
+        this.panel
+          ?.querySelector<HTMLInputElement>(".cond-search-input")
+          ?.focus();
       });
-      row.appendChild(addAlt);
-    }
-
-    // --- Drag-and-drop events ---
-
-    row.addEventListener("dragstart", (e) => {
-      this.dragSourceIndex = clauseIndex;
-      row.classList.add("dragging");
-      e.dataTransfer!.effectAllowed = "move";
-      e.dataTransfer!.setData("text/plain", String(clauseIndex));
     });
+    card.appendChild(addBtn);
 
-    row.addEventListener("dragend", () => {
-      row.classList.remove("dragging");
-      this.dragSourceIndex = -1;
-      this.panel
-        ?.querySelectorAll(".drag-over-top, .drag-over-bottom")
-        .forEach((el) => {
-          el.classList.remove("drag-over-top", "drag-over-bottom");
-        });
-    });
-
-    row.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.dataTransfer!.dropEffect = "move";
-
-      const rect = row.getBoundingClientRect();
-      const midY = rect.top + rect.height / 2;
-
-      row.classList.remove("drag-over-top", "drag-over-bottom");
-      if (e.clientY < midY) {
-        row.classList.add("drag-over-top");
-      } else {
-        row.classList.add("drag-over-bottom");
-      }
-    });
-
-    row.addEventListener("dragleave", (e) => {
-      if (!row.contains(e.relatedTarget as Node)) {
-        row.classList.remove("drag-over-top", "drag-over-bottom");
-      }
-    });
-
-    row.addEventListener("drop", (e) => {
-      e.preventDefault();
-      row.classList.remove("drag-over-top", "drag-over-bottom");
-
-      const sourceIndex = this.dragSourceIndex;
-      if (sourceIndex < 0 || sourceIndex === clauseIndex) return;
-
-      const rect = row.getBoundingClientRect();
-      const midY = rect.top + rect.height / 2;
-      let targetIndex = e.clientY < midY ? clauseIndex : clauseIndex + 1;
-
-      if (sourceIndex < targetIndex) targetIndex--;
-
-      if (sourceIndex !== targetIndex) {
-        const [moved] = this.clauses.splice(sourceIndex, 1);
-        this.clauses.splice(targetIndex, 0, moved);
-        this.render();
-      }
-    });
-
-    return row;
+    return card;
   }
 
   private buildSearchSection(): HTMLElement {
@@ -396,15 +362,32 @@ export class ConditionEditor {
 
     section.appendChild(wrapper);
 
-    if (this.clauses.length > 0) {
+    // Show hint when targeting a specific group
+    if (this.targetGroupIndex !== null) {
       const hint = document.createElement("div");
       hint.className = "cond-search-hint";
-      hint.textContent =
-        "Shift+click to group with last condition. Click operators to toggle AND/OR.";
+      hint.textContent = `Adding to group ${this.targetGroupIndex + 1}`;
       section.appendChild(hint);
     }
 
     const candidates = this.getCandidates();
+
+    const addTalent = (nodeId: number, name: string): void => {
+      if (
+        this.targetGroupIndex !== null &&
+        this.targetGroupIndex < this.groups.length
+      ) {
+        this.groups[this.targetGroupIndex].talents.push({ nodeId, name });
+      } else if (this.groups.length > 0) {
+        // Add to last group
+        this.groups[this.groups.length - 1].talents.push({ nodeId, name });
+      } else {
+        // Create first group
+        this.groups.push({ talents: [{ nodeId, name }] });
+      }
+      this.targetGroupIndex = null;
+      this.render();
+    };
 
     const showResults = (filter: string): void => {
       dropdown.innerHTML = "";
@@ -428,20 +411,8 @@ export class ConditionEditor {
         const item = document.createElement("button");
         item.className = "cond-result-item";
         item.textContent = match.name;
-        item.addEventListener("click", (e) => {
-          if (e.shiftKey && this.clauses.length > 0) {
-            this.clauses[this.clauses.length - 1].talents.push({
-              nodeId: match.nodeId,
-              name: match.name,
-            });
-          } else {
-            if (this.clauses.length > 0) this.operators.push("AND");
-            this.clauses.push({
-              talents: [{ nodeId: match.nodeId, name: match.name }],
-              groupOp: "AND",
-            });
-          }
-          this.render();
+        item.addEventListener("click", () => {
+          addTalent(match.nodeId, match.name);
         });
         dropdown.appendChild(item);
       }
@@ -450,6 +421,10 @@ export class ConditionEditor {
 
     input.addEventListener("input", () => showResults(input.value));
     input.addEventListener("focus", () => showResults(input.value));
+    input.addEventListener("blur", () => {
+      // Delay so click on result item fires first
+      setTimeout(() => dropdown.classList.remove("visible"), 150);
+    });
 
     input.addEventListener("keydown", (e) => {
       const items =
@@ -459,25 +434,19 @@ export class ConditionEditor {
       );
       let index = active ? Array.from(items).indexOf(active) : -1;
 
-      if (e.key === "ArrowDown") {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        index = Math.min(index + 1, items.length - 1);
-        items.forEach((el) => el.classList.remove("active"));
-        items[index]?.classList.add("active");
-        items[index]?.scrollIntoView({ block: "nearest" });
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        index = Math.max(index - 1, 0);
+        index =
+          e.key === "ArrowDown"
+            ? Math.min(index + 1, items.length - 1)
+            : Math.max(index - 1, 0);
         items.forEach((el) => el.classList.remove("active"));
         items[index]?.classList.add("active");
         items[index]?.scrollIntoView({ block: "nearest" });
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (active) {
-          active.click();
-        } else if (items.length > 0) {
-          items[0].click();
-        }
+        if (active) active.click();
+        else if (items.length > 0) items[0].click();
       } else if (e.key === "Escape") {
         dropdown.classList.remove("visible");
       }
@@ -486,93 +455,35 @@ export class ConditionEditor {
     return section;
   }
 
-  private showInlineSearch(
-    anchor: HTMLElement,
-    onSelect: (nodeId: number, name: string) => void,
-  ): void {
-    this.panel?.querySelector(".cond-inline-search")?.remove();
-
-    const container = document.createElement("div");
-    container.className = "cond-inline-search";
-
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "cond-search-input";
-    input.placeholder = "Search...";
-    container.appendChild(input);
-
-    const results = document.createElement("div");
-    results.className = "cond-search-results visible";
-    container.appendChild(results);
-
-    const candidates = this.getCandidates();
-
-    const show = (filter: string): void => {
-      results.innerHTML = "";
-      const query = filter.toLowerCase().trim();
-      const matches = query
-        ? candidates.filter((c) => c.name.toLowerCase().includes(query))
-        : candidates.slice(0, 8);
-
-      for (const match of matches.slice(0, 8)) {
-        const item = document.createElement("button");
-        item.className = "cond-result-item";
-        item.textContent = match.name;
-        item.addEventListener("click", () => {
-          onSelect(match.nodeId, match.name);
-          container.remove();
-        });
-        results.appendChild(item);
-      }
-    };
-
-    input.addEventListener("input", () => show(input.value));
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") container.remove();
-      if (e.key === "Enter") {
-        const first =
-          results.querySelector<HTMLButtonElement>(".cond-result-item");
-        if (first) first.click();
-      }
-    });
-
-    const clauseRow = anchor.closest(".cond-clause");
-    if (clauseRow?.parentElement) {
-      clauseRow.parentElement.insertBefore(container, clauseRow.nextSibling);
-    } else {
-      this.panel?.querySelector(".cond-body")?.appendChild(container);
-    }
-
-    show("");
-    input.focus();
-  }
-
-  private getCandidates(): { nodeId: number; name: string }[] {
+  private getCandidates(): TalentRef[] {
     if (!this.currentTree) return [];
 
-    const usedIds = new Set(
-      this.clauses.flatMap((c) => c.talents.map((t) => t.nodeId)),
-    );
-    const result: { nodeId: number; name: string }[] = [];
-
-    for (const node of this.currentTree.nodes.values()) {
-      if (node.id === this.currentNode!.id) continue;
-      if (usedIds.has(node.id)) continue;
-      result.push({ nodeId: node.id, name: node.name });
+    // Only exclude talents already in the target group (allow cross-group reuse)
+    const excludeIds = new Set<number>();
+    const gi = this.targetGroupIndex ?? this.groups.length - 1;
+    if (gi >= 0 && gi < this.groups.length) {
+      for (const t of this.groups[gi].talents) {
+        excludeIds.add(t.nodeId);
+      }
     }
 
     const spec = state.activeSpec;
+    const trees: TalentTree[] = [this.currentTree];
     if (spec) {
-      const allTrees = [spec.classTree, spec.specTree];
-      if (state.activeHeroTree) allTrees.push(state.activeHeroTree);
+      for (const tree of [spec.classTree, spec.specTree]) {
+        if (tree !== this.currentTree) trees.push(tree);
+      }
+      if (state.activeHeroTree && state.activeHeroTree !== this.currentTree) {
+        trees.push(state.activeHeroTree);
+      }
+    }
 
-      for (const tree of allTrees) {
-        if (tree === this.currentTree) continue;
-        for (const node of tree.nodes.values()) {
-          if (node.id === this.currentNode!.id) continue;
-          if (usedIds.has(node.id)) continue;
-          result.push({ nodeId: node.id, name: node.name });
-        }
+    const result: TalentRef[] = [];
+    for (const tree of trees) {
+      for (const node of tree.nodes.values()) {
+        if (node.id === this.currentNode!.id) continue;
+        if (excludeIds.has(node.id)) continue;
+        result.push({ nodeId: node.id, name: node.name });
       }
     }
 
@@ -606,7 +517,8 @@ export class ConditionEditor {
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn btn-primary cond-btn";
     saveBtn.textContent = "Save";
-    saveBtn.disabled = this.clauses.length === 0;
+    const hasTalents = this.groups.some((g) => g.talents.length > 0);
+    saveBtn.disabled = !hasTalents;
     saveBtn.addEventListener("click", () => {
       this.save();
       this.close();
@@ -618,50 +530,32 @@ export class ConditionEditor {
 
   // --- Persistence ---
 
-  private save(): void {
-    if (!this.currentNode || this.clauses.length === 0) return;
+  private talentLeaf(nodeId: number): BooleanExpr {
+    return { op: "TALENT_SELECTED", nodeId };
+  }
 
-    const clauseExprs: BooleanExpr[] = this.clauses.map((clause) => {
-      if (clause.talents.length === 1) {
-        return {
-          op: "TALENT_SELECTED" as const,
-          nodeId: clause.talents[0].nodeId,
-        };
-      }
+  private save(): void {
+    if (!this.currentNode) return;
+
+    const nonEmpty = this.groups.filter((g) => g.talents.length > 0);
+    if (nonEmpty.length === 0) return;
+
+    const outerOp: "OR" | "AND" = this.mode === "any" ? "OR" : "AND";
+    const innerOp: "AND" | "OR" = this.mode === "any" ? "AND" : "OR";
+
+    const groupToExpr = (g: RuleGroup): BooleanExpr => {
+      if (g.talents.length === 1) return this.talentLeaf(g.talents[0].nodeId);
       return {
-        op: clause.groupOp,
-        children: clause.talents.map((t) => ({
-          op: "TALENT_SELECTED" as const,
-          nodeId: t.nodeId,
-        })),
+        op: innerOp,
+        children: g.talents.map((t) => this.talentLeaf(t.nodeId)),
       };
-    });
+    };
 
     let condition: BooleanExpr;
-
-    if (clauseExprs.length === 1) {
-      condition = clauseExprs[0];
-    } else if (this.operators.every((op) => op === this.operators[0])) {
-      condition = { op: this.operators[0], children: clauseExprs };
+    if (nonEmpty.length === 1) {
+      condition = groupToExpr(nonEmpty[0]);
     } else {
-      // AND binds tighter than OR: group consecutive AND-joined clauses
-      const groups: BooleanExpr[][] = [[clauseExprs[0]]];
-      for (let i = 0; i < this.operators.length; i++) {
-        if (this.operators[i] === "OR") {
-          groups.push([clauseExprs[i + 1]]);
-        } else {
-          groups[groups.length - 1].push(clauseExprs[i + 1]);
-        }
-      }
-
-      const orChildren: BooleanExpr[] = groups.map((group) =>
-        group.length === 1 ? group[0] : { op: "AND" as const, children: group },
-      );
-
-      condition =
-        orChildren.length === 1
-          ? orChildren[0]
-          : { op: "OR" as const, children: orChildren };
+      condition = { op: outerOp, children: nonEmpty.map(groupToExpr) };
     }
 
     state.setConstraint({

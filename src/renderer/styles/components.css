@@ -284,7 +284,7 @@
   fill: var(--text-secondary);
   font-size: 9px;
   font-weight: 600;
-  text-anchor: end;
+  text-anchor: start;
   opacity: 0.8;
 }
 
@@ -300,6 +300,7 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   pointer-events: none;
   font-size: 13px;
+  animation: fade-in 80ms ease;
 }
 
 .talent-tooltip .tooltip-name {
@@ -359,6 +360,8 @@
   position: fixed;
   z-index: 200;
   min-width: 200px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   background: var(--bg-secondary);
   border: 1px solid var(--border-default);
   border-radius: 10px;
@@ -367,6 +370,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  animation: fade-in var(--transition-fast);
 }
 
 .node-popover-title {
@@ -436,6 +440,7 @@
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  transition: color var(--transition-normal);
 }
 
 .count-value.green {
@@ -453,11 +458,6 @@
   color: var(--text-secondary);
 }
 
-.count-timing {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
 .count-warning {
   font-size: 12px;
   color: var(--color-red);
@@ -465,16 +465,26 @@
 }
 
 /* Validation errors — centered full-width banner */
-.validation-errors:empty {
-  display: none;
-}
-
 .validation-errors {
   flex-basis: 100%;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--transition-normal);
+}
+
+.validation-errors.has-errors {
+  grid-template-rows: 1fr;
+}
+
+.validation-errors-inner {
+  overflow: hidden;
   text-align: center;
-  padding: 4px 12px;
   background: var(--color-red-dim);
   border-radius: 4px;
+}
+
+.validation-errors.has-errors .validation-errors-inner {
+  padding: 4px 12px;
 }
 
 .validation-error-line {
@@ -485,7 +495,7 @@
 
 .validation-warning-line {
   font-size: 11px;
-  color: var(--color-yellow);
+  color: var(--color-amber);
   line-height: 1.6;
 }
 
@@ -550,6 +560,7 @@
   align-items: center;
   justify-content: center;
   background: var(--bg-overlay);
+  animation: fade-in var(--transition-normal);
 }
 
 .export-dialog-content {
@@ -621,11 +632,21 @@
   transition: width 100ms linear;
 }
 
-/* Condition editor panel */
-.cond-panel {
+/* Condition editor modal */
+.cond-overlay {
   position: fixed;
+  inset: 0;
   z-index: 200;
-  width: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-overlay);
+  animation: fade-in var(--transition-fast);
+}
+
+.cond-dialog {
+  width: 460px;
+  max-height: 80vh;
   background: var(--bg-secondary);
   border: 1px solid var(--border-default);
   border-radius: 12px;
@@ -667,6 +688,17 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.cond-conditions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .cond-sentence {
@@ -682,112 +714,155 @@
   padding: 8px 0;
 }
 
-/* Clause list */
-.cond-clause-list {
+/* Group card — rounded container with horizontal chip flow */
+.cond-group-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 8px 10px;
+  padding-right: 24px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* Operator separator between clauses */
-.cond-op-sep {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  padding: 2px 0;
+  gap: 4px 6px;
 }
 
-.cond-op-btn {
-  padding: 2px 10px;
-  border-radius: 10px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  cursor: pointer;
+/* Delete group button — top-right, show on hover */
+.cond-group-delete {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
   border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  opacity: 0;
   transition: all var(--transition-fast);
 }
 
-.cond-op-btn.and {
-  background: var(--color-blue-dim);
-  color: var(--color-blue);
+.cond-group-card:hover .cond-group-delete {
+  opacity: 1;
 }
 
-.cond-op-btn.or {
-  background: var(--color-amber-dim);
-  color: var(--color-amber);
+.cond-group-delete:hover {
+  color: var(--color-red);
 }
 
-.cond-op-btn:hover {
-  filter: brightness(1.3);
+/* Inner label ("and"/"or") between items within a group */
+.cond-inner-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 4px;
 }
 
-/* Individual clause row */
-.cond-clause {
+/* Condition item — inline chip within a group */
+.cond-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* + Add condition link inside a group */
+.cond-add-condition {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: 1px dashed var(--border-default);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.cond-add-condition:hover {
+  color: var(--text-secondary);
+  border-color: var(--text-muted);
+}
+
+/* OR separator between groups */
+.cond-or-sep {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 6px;
+  gap: 8px;
+  padding: 2px 0;
 }
 
-.cond-clause-group {
-  border-left: 2px solid var(--color-amber);
+.cond-or-sep::before,
+.cond-or-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
+  opacity: 0.5;
 }
 
-/* Drag handle */
-.cond-drag-handle {
-  cursor: grab;
-  color: var(--text-muted);
-  flex-shrink: 0;
-  font-size: 14px;
-  line-height: 1;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.cond-drag-handle:hover {
-  color: var(--text-secondary);
-}
-
-.cond-clause.dragging {
-  opacity: 0.3;
-}
-
-.drag-over-top {
-  box-shadow: inset 0 2px 0 var(--color-blue);
-}
-
-.drag-over-bottom {
-  box-shadow: inset 0 -2px 0 var(--color-blue);
-}
-
-/* Inner operator (within a sub-group) */
-.cond-inner-op {
+.cond-or-sep span {
   font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
-  cursor: pointer;
-  border: none;
-  background: none;
-  padding: 2px 4px;
-  border-radius: 4px;
-  transition: background var(--transition-fast);
-}
-
-.cond-inner-op:hover {
-  background: var(--bg-secondary);
-}
-
-.cond-inner-op.and {
-  color: var(--color-blue);
-}
-
-.cond-inner-op.or {
   color: var(--color-amber);
+  letter-spacing: 0.5px;
+}
+
+/* + OR group button at bottom */
+.cond-add-group {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: 1px dashed var(--border-default);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  align-self: flex-start;
+}
+
+.cond-add-group:hover {
+  color: var(--color-amber);
+  border-color: var(--color-amber);
+}
+
+/* Mode toggle — segmented control */
+.cond-mode-toggle {
+  display: flex;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.cond-mode-btn {
+  flex: 1;
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.cond-mode-btn:first-child {
+  border-right: 1px solid var(--border-default);
+}
+
+.cond-mode-btn:hover:not(.active) {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.cond-mode-btn.active {
+  color: var(--color-blue);
+  background: var(--color-blue-dim);
 }
 
 /* Talent chip */
@@ -824,27 +899,10 @@
   color: var(--color-red);
 }
 
-/* Add alternative within a group */
-.cond-add-alt {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: none;
-  border: 1px dashed var(--border-default);
-  cursor: pointer;
-}
-
-.cond-add-alt:hover {
-  color: var(--text-secondary);
-  border-color: var(--text-muted);
-}
-
 /* Search section */
 .cond-search-section {
-  border-top: 1px solid var(--border-default);
-  padding-top: 8px;
+  border-bottom: 1px solid var(--border-default);
+  padding-bottom: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -880,7 +938,7 @@
   border-color: var(--color-blue);
 }
 
-/* Search results dropdown */
+/* Search results dropdown — opens downward */
 .cond-search-results {
   display: none;
   position: absolute;
@@ -888,7 +946,7 @@
   left: 0;
   right: 0;
   z-index: 10;
-  max-height: 160px;
+  max-height: 200px;
   overflow-y: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-default);
@@ -932,24 +990,6 @@
   font-style: italic;
 }
 
-/* Inline search (within sub-group "add alt") */
-.cond-inline-search {
-  position: relative;
-  margin: 4px 0;
-}
-
-.cond-inline-search .cond-search-input {
-  padding: 4px 8px;
-  font-size: 11px;
-}
-
-.cond-inline-search .cond-search-results {
-  position: relative;
-  border-top: 1px solid var(--border-default);
-  border-radius: 0 0 4px 4px;
-  max-height: 100px;
-}
-
 /* Footer */
 .cond-footer {
   display: flex;
@@ -967,4 +1007,15 @@
 .cond-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }

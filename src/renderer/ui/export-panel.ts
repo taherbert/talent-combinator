@@ -50,15 +50,13 @@ export class ExportPanel {
       const heroTree = state.activeHeroTree;
       if (heroTree) trees.push(heroTree);
 
-      const startTime = performance.now();
       const allBuilds = trees.map((tree) => {
         const constraints = state.getConstraintsForTree(tree);
         return generateTreeBuilds(tree, constraints);
       });
       const output = this.generateProfilesets(allBuilds, trees);
-      const duration = performance.now() - startTime;
 
-      this.showExportDialog(output, duration);
+      this.showExportDialog(output);
     } finally {
       this.generateBtn.disabled = false;
       this.generateBtn.textContent = "Generate";
@@ -84,11 +82,9 @@ export class ExportPanel {
         const build = allBuilds[i][indices[i]];
         const encoded = this.encodeBuild(build);
         if (i === 0) {
-          parts.push(`profileset."build_${name}"=${treeTypes[i]}=${encoded}`);
+          parts.push(`profileset.build_${name}=${treeTypes[i]}=${encoded}`);
         } else {
-          parts.push(
-            `profileset."build_${name}"+="${treeTypes[i]}=${encoded}"`,
-          );
+          parts.push(`profileset.build_${name}+=${treeTypes[i]}=${encoded}`);
         }
       }
 
@@ -118,7 +114,7 @@ export class ExportPanel {
       .join("/");
   }
 
-  private showExportDialog(output: string, durationMs: number): void {
+  private showExportDialog(output: string): void {
     const dialog = document.createElement("div");
     dialog.className = "export-dialog";
 
@@ -127,10 +123,17 @@ export class ExportPanel {
 
     const header = document.createElement("div");
     header.className = "export-dialog-header";
-    header.innerHTML = `
-      <h2>Export Profilesets</h2>
-      <button class="btn btn-secondary" id="close-export">&times;</button>
-    `;
+
+    const title = document.createElement("h2");
+    title.textContent = "Export Profilesets";
+    header.appendChild(title);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "btn btn-secondary";
+    closeBtn.textContent = "\u00d7";
+    closeBtn.addEventListener("click", () => dialog.remove());
+    header.appendChild(closeBtn);
+
     content.appendChild(header);
 
     const body = document.createElement("div");
@@ -146,12 +149,12 @@ export class ExportPanel {
     const footer = document.createElement("div");
     footer.className = "export-dialog-footer";
 
-    const lineCount = output
+    const buildCount = output
       .split("\n")
-      .filter((l) => l.startsWith("profileset.")).length;
+      .filter((l) => l.startsWith("profileset.") && !l.includes("+=")).length;
     const stats = document.createElement("span");
     stats.className = "export-stats";
-    stats.textContent = `${lineCount} profilesets · Generated in ${durationMs.toFixed(0)}ms`;
+    stats.textContent = `${buildCount.toLocaleString()} profilesets`;
     footer.appendChild(stats);
 
     const actions = document.createElement("div");
@@ -185,9 +188,6 @@ export class ExportPanel {
 
     dialog.addEventListener("click", (e) => {
       if (e.target === dialog) dialog.remove();
-    });
-    content.querySelector("#close-export")!.addEventListener("click", () => {
-      dialog.remove();
     });
 
     this.dialogContainer.appendChild(dialog);

@@ -25,15 +25,18 @@ export class CombinationCounter {
   private countEl: HTMLElement;
   private breakdownEl: HTMLElement;
   private warningEl: HTMLElement;
-  private timingEl: HTMLElement;
   private errorsEl: HTMLElement;
+  private errorsInner: HTMLElement;
 
   constructor(container: HTMLElement) {
     this.el = container;
 
-    // Warnings banner — full-width centered
+    // Warnings banner — full-width centered, grid collapse for animation
     this.errorsEl = document.createElement("div");
     this.errorsEl.className = "validation-errors";
+    this.errorsInner = document.createElement("div");
+    this.errorsInner.className = "validation-errors-inner";
+    this.errorsEl.appendChild(this.errorsInner);
     this.el.appendChild(this.errorsEl);
 
     // Count + breakdown inline
@@ -47,10 +50,6 @@ export class CombinationCounter {
     this.breakdownEl = document.createElement("span");
     this.breakdownEl.className = "count-breakdown";
     countDisplay.appendChild(this.breakdownEl);
-
-    this.timingEl = document.createElement("span");
-    this.timingEl.className = "count-timing";
-    countDisplay.appendChild(this.timingEl);
 
     this.warningEl = document.createElement("span");
     this.warningEl.className = "count-warning";
@@ -70,55 +69,40 @@ export class CombinationCounter {
 
   private update(counts: TreeCounts): void {
     const total = counts.totalCount;
+    const warnings = this.collectWarnings(counts);
+    this.showWarnings(warnings);
 
     this.countEl.textContent = formatCount(total);
     this.countEl.className = "count-value";
 
-    // Collect warnings from all tree details
-    const warnings = this.collectWarnings(counts);
-    this.showWarnings(warnings);
+    let color: string;
+    let warning = "";
 
     if (total === 0n) {
-      this.countEl.classList.add("red");
+      color = "red";
       if (warnings.length === 0 && !state.hasValidationError) {
-        this.warningEl.textContent = "No valid builds — check constraints";
-      } else {
-        this.warningEl.textContent = "";
+        warning = "No valid builds \u2014 check constraints";
       }
     } else if (total > MAX_PROFILESETS_BIG) {
-      this.countEl.classList.add("red");
-      this.warningEl.textContent = `Exceeds Raidbots limit of ${MAX_PROFILESETS.toLocaleString()}. Add more constraints.`;
+      color = "red";
+      warning = `Exceeds Raidbots limit of ${MAX_PROFILESETS.toLocaleString()}. Add more constraints.`;
     } else if (total > GREEN_THRESHOLD_BIG) {
-      this.countEl.classList.add("yellow");
-      this.warningEl.textContent = "";
+      color = "yellow";
     } else {
-      this.countEl.classList.add("green");
-      this.warningEl.textContent = "";
+      color = "green";
     }
 
-    // Per-tree breakdown
-    const parts: string[] = [];
-    parts.push(`Class: ${formatCount(counts.classCount)}`);
-    parts.push(`Spec: ${formatCount(counts.specCount)}`);
+    this.countEl.classList.add(color);
+    this.warningEl.textContent = warning;
+
+    const parts = [
+      `Class: ${formatCount(counts.classCount)}`,
+      `Spec: ${formatCount(counts.specCount)}`,
+    ];
     if (counts.heroCount > 0n || state.activeHeroTree) {
       parts.push(`Hero: ${formatCount(counts.heroCount)}`);
     }
     this.breakdownEl.textContent = parts.join(" \u00d7 ");
-
-    // Timing from details
-    const details = counts.details;
-    const times = [
-      details?.class?.durationMs,
-      details?.spec?.durationMs,
-      details?.hero?.durationMs,
-    ].filter((t): t is number => t != null);
-    if (times.length > 0) {
-      const maxMs = Math.max(...times);
-      this.timingEl.textContent =
-        maxMs < 1 ? "(<1ms)" : `(${Math.round(maxMs)}ms)`;
-    } else {
-      this.timingEl.textContent = "";
-    }
   }
 
   private collectWarnings(counts: TreeCounts): CountWarning[] {
@@ -143,21 +127,26 @@ export class CombinationCounter {
   }
 
   private updateValidationDisplay(): void {
-    this.errorsEl.innerHTML = "";
+    this.errorsInner.innerHTML = "";
     if (state.hasValidationError) {
       const line = document.createElement("div");
       line.className = "validation-error-line";
       line.textContent = state.validationError!;
-      this.errorsEl.appendChild(line);
+      this.errorsInner.appendChild(line);
+      this.errorsEl.classList.add("has-errors");
+    } else {
+      this.errorsEl.classList.remove("has-errors");
     }
   }
 
   private showWarnings(warnings: CountWarning[]): void {
-    // Validation errors take precedence — shown via updateValidationDisplay
     if (state.hasValidationError) return;
 
-    this.errorsEl.innerHTML = "";
-    if (warnings.length === 0) return;
+    this.errorsInner.innerHTML = "";
+    if (warnings.length === 0) {
+      this.errorsEl.classList.remove("has-errors");
+      return;
+    }
 
     for (const w of warnings) {
       const line = document.createElement("div");
@@ -166,7 +155,8 @@ export class CombinationCounter {
           ? "validation-error-line"
           : "validation-warning-line";
       line.textContent = w.message;
-      this.errorsEl.appendChild(line);
+      this.errorsInner.appendChild(line);
     }
+    this.errorsEl.classList.add("has-errors");
   }
 }
