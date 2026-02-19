@@ -215,7 +215,7 @@
   text-align: center;
   padding: 4px 12px;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .tree-svg-container {

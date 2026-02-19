@@ -4,7 +4,9 @@ import { TalentTreeView } from "./ui/talent-tree";
 import { CombinationCounter } from "./ui/combination-counter";
 import { ExportPanel } from "./ui/export-panel";
 import { countTreeBuilds } from "../shared/build-counter";
+import { decodeTalentHash } from "./hash-decoder";
 import type {
+  Constraint,
   CountResult,
   Specialization,
   TalentNode,
@@ -348,6 +350,82 @@ function recomputeImpliedForTree(tree: TalentTree): void {
   }
 }
 
+// --- Validation ---
+
+function formatTriggerMessage(nodeName: string, errorMessage: string): string {
+  // Budget exceeded: "... need X points — exceeds the Y-point budget by Z"
+  const budgetMatch = errorMessage.match(
+    /need (\d+) points.*?(\d+)-point budget/,
+  );
+  if (budgetMatch) {
+    return `"${nodeName}" exceeds the ${budgetMatch[2]}-point budget (required talents need ${budgetMatch[1]} points)`;
+  }
+  // Blocked too many: "X points selectable, Y needed"
+  const blockedMatch = errorMessage.match(
+    /(\d+) points selectable, (\d+) needed/,
+  );
+  if (blockedMatch) {
+    return `Blocking "${nodeName}" leaves only ${blockedMatch[1]} points selectable (${blockedMatch[2]} needed)`;
+  }
+  // Unreachable
+  if (errorMessage.includes("can't be reached")) {
+    return `"${nodeName}" can't be reached — all paths to it are blocked`;
+  }
+  // Always+Never conflict
+  if (errorMessage.includes("both Always and Never")) {
+    return `"${nodeName}" is both Always and Never`;
+  }
+  // Gate-related: pass through with trigger prefix
+  return `"${nodeName}": ${errorMessage}`;
+}
+
+function validateAndSetError(triggerNodeId: number): boolean {
+  const tree = findTreeForNode(triggerNodeId);
+  if (!tree) return false;
+
+  const constraints = state.getConstraintsForTree(tree);
+  const result = countTreeBuilds(tree, constraints);
+  const error = result.warnings.find((w) => w.severity === "error");
+  if (error) {
+    const node = tree.nodes.get(triggerNodeId);
+    const nodeName = node?.name ?? `Node ${triggerNodeId}`;
+    const message = formatTriggerMessage(nodeName, error.message);
+    state.setValidationError(triggerNodeId, message);
+    return true;
+  }
+  state.clearValidationError();
+  return false;
+}
+
+function revalidateAllTrees(): void {
+  const spec = state.activeSpec;
+  if (!spec) return;
+
+  const trees: TalentTree[] = [spec.classTree, spec.specTree];
+  const heroTree = state.activeHeroTree;
+  if (heroTree) trees.push(heroTree);
+
+  for (const tree of trees) {
+    const constraints = state.getConstraintsForTree(tree);
+    const result = countTreeBuilds(tree, constraints);
+    const error = result.warnings.find((w) => w.severity === "error");
+    if (error) {
+      // Update trigger to the actual erroring node (may differ after removal)
+      const errorNodeId = error.nodeIds?.[0] ?? state.triggerNodeId;
+      if (errorNodeId != null) {
+        const node = tree.nodes.get(errorNodeId);
+        const nodeName = node?.name ?? `Node ${errorNodeId}`;
+        state.setValidationError(
+          errorNodeId,
+          formatTriggerMessage(nodeName, error.message),
+        );
+      }
+      return;
+    }
+  }
+  state.clearValidationError();
+}
+
 // --- Auto-select hero nodes ---
 
 function isRealChoice(node: TalentNode): boolean {
@@ -404,6 +482,7 @@ state.subscribe((event) => {
       const tree = findTreeForNode(nodeId);
       if (tree) recomputeImpliedForTree(tree);
 
+      validateAndSetError(nodeId);
       if (key) scheduleCount(key);
       break;
     }
@@ -411,12 +490,233 @@ state.subscribe((event) => {
       const tree = findTreeForNode(event.nodeId);
       if (tree) recomputeImpliedForTree(tree);
 
+      revalidateAllTrees();
       const key = detectTreeKey(event.nodeId);
       if (key) scheduleCount(key);
       break;
     }
   }
 });
+
+// --- Import talent hash ---
+
+function showImportHashDialog(): Promise<{
+  hashStr: string;
+  specId: number;
+} | null> {
+  return new Promise((resolve) => {
+    const dialogContainer = document.getElementById("dialog-container")!;
+    let resolved = false;
+
+    const finish = (val: { hashStr: string; specId: number } | null): void => {
+      if (resolved) return;
+      resolved = true;
+      overlay.remove();
+      resolve(val);
+    };
+
+    const overlay = document.createElement("div");
+    overlay.className = "export-dialog";
+
+    const content = document.createElement("div");
+    content.className = "export-dialog-content";
+    content.style.cssText = "width: 500px; max-height: 60vh;";
+
+    const dialogHeader = document.createElement("div");
+    dialogHeader.className = "export-dialog-header";
+    const title = document.createElement("h2");
+    title.textContent = "Import Talent Hash";
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "btn btn-secondary";
+    closeBtn.textContent = "×";
+    closeBtn.addEventListener("click", () => finish(null));
+    dialogHeader.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "export-dialog-body";
+
+    const label = document.createElement("p");
+    label.textContent =
+      "Paste a WoW talent import string. All selected talents will be added as must-have constraints.";
+    label.style.cssText =
+      "margin-bottom: 12px; color: var(--text-muted); font-size: 12px;";
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "export-output";
+    textarea.style.cssText = "min-height: 80px; resize: vertical;";
+    textarea.placeholder = "BQEAAAAAAAAAAAAAAAAAAAAFBg...";
+
+    const errorMsg = document.createElement("p");
+    errorMsg.style.cssText =
+      "color: var(--color-red, #e74c3c); font-size: 12px; margin-top: 8px; display: none;";
+
+    body.append(label, textarea, errorMsg);
+
+    const footer = document.createElement("div");
+    footer.className = "export-dialog-footer";
+    footer.style.cssText =
+      "display: flex; justify-content: flex-end; gap: 8px;";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn btn-secondary";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => finish(null));
+
+    const importBtn = document.createElement("button");
+    importBtn.className = "btn btn-primary";
+    importBtn.textContent = "Import";
+    importBtn.addEventListener("click", () => {
+      const val = textarea.value.trim();
+      if (!val) {
+        errorMsg.textContent = "Please paste a talent string.";
+        errorMsg.style.display = "block";
+        return;
+      }
+      // First-pass decode with empty node list to validate format + extract specId
+      const probe = decodeTalentHash(val, []);
+      if (probe === null) {
+        errorMsg.textContent =
+          "Invalid talent string. Paste the full import string from the game or Wowhead.";
+        errorMsg.style.display = "block";
+        return;
+      }
+      finish({ hashStr: val, specId: probe.specId });
+    });
+
+    footer.append(cancelBtn, importBtn);
+
+    content.append(dialogHeader, body, footer);
+    overlay.appendChild(content);
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) finish(null);
+    });
+
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") finish(null);
+    });
+
+    dialogContainer.appendChild(overlay);
+    textarea.focus();
+  });
+}
+
+async function importTalentHash(): Promise<void> {
+  const dialogResult = await showImportHashDialog();
+  if (!dialogResult) return;
+
+  const { hashStr, specId } = dialogResult;
+  const targetSpec = state.specs.find((s) => s.specId === specId);
+  if (!targetSpec) return;
+
+  const currentSpec = state.activeSpec;
+  if (
+    currentSpec &&
+    currentSpec.specId !== specId &&
+    state.constraints.size > 0
+  ) {
+    const ok = window.confirm(
+      `This hash is for ${targetSpec.className} ${targetSpec.specName}. Switching will clear current constraints. Continue?`,
+    );
+    if (!ok) return;
+  }
+
+  // The hash encodes ALL nodes the game returns from C_Traits.GetTreeNodes —
+  // class nodes, every spec's spec/hero nodes (including other specs of the
+  // same class), and subTree selection nodes. Nodes from other specs are
+  // always encoded as unselected (0), but still consume 1 bit each. Missing
+  // them causes cascading misalignment for all higher-ID nodes.
+  function makeStub(id: number): TalentNode {
+    return {
+      id,
+      name: "",
+      icon: "",
+      type: "single" as const,
+      maxRanks: 1,
+      entries: [],
+      next: [],
+      prev: [],
+      reqPoints: 0,
+      row: 0,
+      col: 0,
+      freeNode: true,
+      entryNode: true,
+      isApex: false,
+    };
+  }
+
+  const sameClassSpecs = state.specs.filter(
+    (s) => s.className === targetSpec.className,
+  );
+  const allNodeMap = new Map<number, TalentNode>();
+  for (const s of sameClassSpecs) {
+    for (const node of s.classTree.nodes.values())
+      allNodeMap.set(node.id, node);
+    for (const node of s.specTree.nodes.values()) allNodeMap.set(node.id, node);
+    for (const heroTree of s.heroTrees)
+      for (const node of heroTree.nodes.values()) allNodeMap.set(node.id, node);
+    for (const stn of s.subTreeNodes) allNodeMap.set(stn.id, makeStub(stn.id));
+    for (const sid of s.systemNodeIds) allNodeMap.set(sid, makeStub(sid));
+  }
+
+  const allNodes: TalentNode[] = [...allNodeMap.values()];
+
+  const decoded = decodeTalentHash(hashStr, allNodes);
+  if (!decoded?.selections.length) return;
+  const { selections } = decoded;
+
+  const subTreeAndSystemIds = new Set([
+    ...sameClassSpecs.flatMap((s) => s.subTreeNodes.map((n) => n.id)),
+    ...sameClassSpecs.flatMap((s) => s.systemNodeIds),
+  ]);
+  const currentSpecTalentIds = new Set([
+    ...targetSpec.classTree.nodes.keys(),
+    ...targetSpec.specTree.nodes.keys(),
+    ...targetSpec.heroTrees.flatMap((ht) => [...ht.nodes.keys()]),
+  ]);
+
+  // Detect hero tree from the subTreeNode's entryIndex.
+  const allSubTreeNodes = sameClassSpecs.flatMap((s) => s.subTreeNodes);
+  let detectedHeroTree: TalentTree | null = null;
+  for (const sel of selections) {
+    const stn = allSubTreeNodes.find((s) => s.id === sel.nodeId);
+    if (stn && sel.entryIndex !== undefined) {
+      const traitSubTreeId = stn.entries[sel.entryIndex]?.traitSubTreeId;
+      if (traitSubTreeId != null) {
+        detectedHeroTree =
+          targetSpec.heroTrees.find((ht) => ht.subTreeId === traitSubTreeId) ??
+          null;
+        break;
+      }
+    }
+  }
+
+  state.selectSpec(targetSpec);
+
+  if (detectedHeroTree && detectedHeroTree !== state.activeHeroTree) {
+    state.selectHeroTree(detectedHeroTree);
+  }
+
+  // Skip subTree/system IDs, other specs' nodes, and free nodes (always granted, zero cost).
+  for (const sel of selections) {
+    if (subTreeAndSystemIds.has(sel.nodeId)) continue;
+    if (!currentSpecTalentIds.has(sel.nodeId)) continue;
+
+    const node = allNodeMap.get(sel.nodeId);
+    // Granted selections on choice nodes don't encode entryIndex in the hash;
+    // default to entry 0 so the constraint pins the choice.
+    const entryIndex =
+      sel.entryIndex ?? (sel.free && node?.type === "choice" ? 0 : undefined);
+    const constraint: Constraint = {
+      nodeId: sel.nodeId,
+      type: "always",
+      entryIndex,
+      exactRank: sel.ranks,
+    };
+    state.setConstraint(constraint);
+    if (state.hasValidationError) break;
+  }
+}
 
 // --- Save/Load ---
 
@@ -444,10 +744,8 @@ async function loadLoadout(): Promise<void> {
   );
   if (!spec) return;
 
-  // Select spec (clears existing constraints)
   state.selectSpec(spec);
 
-  // Select hero tree
   if (loadout.heroTreeName) {
     const heroTree = spec.heroTrees.find(
       (ht) => ht.subTreeName === loadout.heroTreeName,
@@ -455,13 +753,13 @@ async function loadLoadout(): Promise<void> {
     if (heroTree) state.selectHeroTree(heroTree);
   }
 
-  // Restore constraints
   for (const constraint of loadout.constraints) {
     state.setConstraint(constraint);
+    if (state.hasValidationError) break;
   }
 }
 
-// Header save/load buttons
+// Header save/load/import buttons
 const headerActions = document.createElement("div");
 headerActions.className = "header-actions";
 
@@ -476,6 +774,21 @@ headerSaveBtn.className = "btn btn-secondary btn-sm";
 headerSaveBtn.textContent = "Save";
 headerSaveBtn.addEventListener("click", saveLoadout);
 headerActions.appendChild(headerSaveBtn);
+
+const headerImportBtn = document.createElement("button");
+headerImportBtn.className = "btn btn-secondary btn-sm";
+headerImportBtn.textContent = "Import Hash";
+headerImportBtn.addEventListener("click", () => void importTalentHash());
+headerActions.appendChild(headerImportBtn);
+
+const headerClearBtn = document.createElement("button");
+headerClearBtn.className = "btn btn-secondary btn-sm";
+headerClearBtn.textContent = "Clear All";
+headerClearBtn.addEventListener("click", () => {
+  const spec = state.activeSpec;
+  if (spec) state.selectSpec(spec);
+});
+headerActions.appendChild(headerClearBtn);
 
 headerEl.appendChild(headerActions);
 

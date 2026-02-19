@@ -44,6 +44,7 @@ export interface RawSubTreeNode {
 export interface RawSpecData {
   className: string;
   specName: string;
+  specId?: number;
   classNodes: RawTalentNode[];
   specNodes: RawTalentNode[];
   heroNodes: RawTalentNode[];
@@ -95,12 +96,24 @@ export interface TalentTree {
   subTreeName?: string;
 }
 
+// Hero tree selection node — the "choice" node where you pick a hero spec.
+// Needed to correctly position bits when decoding a talent import string.
+export interface SubTreeNodeInfo {
+  id: number;
+  entries: { traitSubTreeId: number }[];
+}
+
 export interface Specialization {
   className: string;
   specName: string;
+  specId?: number;
   classTree: TalentTree;
   specTree: TalentTree;
   heroTrees: TalentTree[];
+  subTreeNodes: SubTreeNodeInfo[];
+  // Node IDs excluded from the talent tree display (entryNode/freeNode with no name)
+  // but still present in the game's GetTreeNodes hash encoding.
+  systemNodeIds: number[];
 }
 
 // --- Constraint types ---
@@ -128,7 +141,8 @@ export type NodeState =
   | "always"
   | "never"
   | "conditional"
-  | "implied";
+  | "implied"
+  | "free";
 
 // --- Solver types ---
 
@@ -211,7 +225,8 @@ export type AppEvent =
   | { type: "constraint-removed"; nodeId: number }
   | { type: "count-updated"; counts: TreeCounts }
   | { type: "generation-complete"; result: SolverResult }
-  | { type: "data-loaded"; data: TalentDataResult };
+  | { type: "data-loaded"; data: TalentDataResult }
+  | { type: "validation-changed" };
 
 export interface TreeCounts {
   classCount: bigint;

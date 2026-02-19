@@ -22,6 +22,8 @@ class AppState {
   };
   private _impliedBy = new Map<number, Set<number>>();
   private _userOwned = new Set<number>();
+  private _triggerNodeId: number | null = null;
+  private _validationError: string | null = null;
 
   get specs(): Specialization[] {
     return this._specs;
@@ -37,6 +39,15 @@ class AppState {
   }
   get counts(): TreeCounts {
     return this._counts;
+  }
+  get triggerNodeId(): number | null {
+    return this._triggerNodeId;
+  }
+  get validationError(): string | null {
+    return this._validationError;
+  }
+  get hasValidationError(): boolean {
+    return this._validationError !== null;
   }
   subscribe(listener: Listener): () => void {
     this.listeners.push(listener);
@@ -63,11 +74,15 @@ class AppState {
     this._constraints.clear();
     this._impliedBy.clear();
     this._userOwned.clear();
+    this._triggerNodeId = null;
+    this._validationError = null;
     this.emit({ type: "spec-selected", spec });
   }
 
   selectHeroTree(tree: TalentTree): void {
     this._activeHeroTree = tree;
+    this._triggerNodeId = null;
+    this._validationError = null;
     // Remove constraints belonging to other hero trees
     for (const [nodeId] of this._constraints) {
       if (tree.nodes.has(nodeId)) continue;
@@ -110,6 +125,19 @@ class AppState {
   updateCounts(counts: TreeCounts): void {
     this._counts = counts;
     this.emit({ type: "count-updated", counts });
+  }
+
+  setValidationError(nodeId: number, message: string): void {
+    this._triggerNodeId = nodeId;
+    this._validationError = message;
+    this.emit({ type: "validation-changed" });
+  }
+
+  clearValidationError(): void {
+    if (!this.hasValidationError) return;
+    this._triggerNodeId = null;
+    this._validationError = null;
+    this.emit({ type: "validation-changed" });
   }
 
   setImpliedConstraints(sourceId: number, impliedIds: number[]): void {

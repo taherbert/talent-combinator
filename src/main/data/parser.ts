@@ -2,6 +2,7 @@ import type {
   RawSpecData,
   RawTalentNode,
   Specialization,
+  SubTreeNodeInfo,
   TalentEntry,
   TalentNode,
   TalentTree,
@@ -52,7 +53,12 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
       id: raw.id,
       name: nodeName(raw),
       icon: raw.icon || raw.entries[0]?.icon || "",
-      type: raw.entries.length > 1 ? "choice" : "single",
+      type:
+        raw.type === "tiered"
+          ? "single"
+          : raw.entries.length > 1
+            ? "choice"
+            : "single",
       maxRanks: raw.maxRanks,
       entries: raw.entries.map(parseEntry),
       next: raw.next ?? [],
@@ -206,12 +212,33 @@ export function parseSpecializations(rawData: RawSpecData[]): Specialization[] {
       buildTree(nodes, "hero", stId, heroNameMap.get(stId)),
     );
 
+    const subTreeNodes: SubTreeNodeInfo[] = (raw.subTreeNodes ?? [])
+      .filter((stn) => stn.id != null && stn.entries?.length)
+      .map((stn) => ({
+        id: stn.id,
+        // Preserve raw order — matches the game's entryIDs ordering in the hash
+        entries: stn.entries.map((e) => ({ traitSubTreeId: e.traitSubTreeId })),
+      }));
+
+    // Collect node IDs that fail isValidNode (entryNode/freeNode with no name/entries)
+    // but are still present in the game's GetTreeNodes hash encoding.
+    const systemNodeIds: number[] = [
+      ...raw.classNodes,
+      ...raw.specNodes,
+      ...raw.heroNodes,
+    ]
+      .filter((n) => !isValidNode(n) && n.id != null)
+      .map((n) => n.id);
+
     return {
       className: raw.className,
       specName: raw.specName,
+      specId: raw.specId,
       classTree: buildTree(raw.classNodes, "class"),
       specTree: buildTree(raw.specNodes, "spec"),
       heroTrees,
+      subTreeNodes,
+      systemNodeIds,
     };
   });
 }

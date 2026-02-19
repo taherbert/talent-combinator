@@ -82,7 +82,7 @@ function buildTiers(tree: TalentTree): {
   return { tiers, sortedKeys };
 }
 
-// Guaranteed minimum cost of a free/entry node before a gate
+// Guaranteed minimum cost of a free node before a gate
 function freeNodeCost(node: TalentNode): number {
   if (node.type === "choice") {
     return Math.min(...node.entries.map((e) => e.maxRanks));
@@ -90,14 +90,14 @@ function freeNodeCost(node: TalentNode): number {
   return node.maxRanks;
 }
 
-// Gate thresholds adjusted for free/entry node investments that don't consume budget
+// Gate thresholds adjusted for free node investments that don't consume budget
 function computeAdjustedGates(
   tree: TalentTree,
 ): { row: number; requiredPoints: number }[] {
   return tree.gates.map((gate) => {
     let freeInvested = 0;
     for (const node of tree.nodes.values()) {
-      if (node.row < gate.row && (node.entryNode || node.freeNode)) {
+      if (node.row < gate.row && node.freeNode) {
         freeInvested += freeNodeCost(node);
       }
     }
@@ -122,7 +122,7 @@ function buildNodePoly(
   isNever: boolean,
   accessible: boolean,
 ): NodePolyResult {
-  const isFree = node.freeNode || node.entryNode;
+  const isFree = node.freeNode;
 
   if (isNever || (!accessible && !node.freeNode)) {
     return { skipPoly: null, selectPoly: null };
@@ -150,6 +150,9 @@ function buildNodePoly(
   let minRank: number, maxRank: number;
   if (constraint?.exactRank != null) {
     minRank = maxRank = constraint.exactRank;
+  } else if (isFree) {
+    // Free/entry nodes are always taken at max rank — no variation
+    minRank = maxRank = node.maxRanks;
   } else {
     minRank = isAlways ? 1 : 0;
     maxRank = node.maxRanks;
@@ -213,6 +216,16 @@ export function computeReachable(
   return reachable;
 }
 
+function nodeName(tree: TalentTree, nodeId: number): string {
+  return tree.nodes.get(nodeId)?.name ?? `#${nodeId}`;
+}
+
+function nameList(tree: TalentTree, ids: Iterable<number>): string {
+  const names = [...ids].map((id) => `"${nodeName(tree, id)}"`);
+  if (names.length <= 2) return names.join(" and ");
+  return names.slice(0, -1).join(", ") + ", and " + names[names.length - 1];
+}
+
 function validateBudgetAndGates(
   tree: TalentTree,
   constraints: Map<number, Constraint>,
@@ -226,14 +239,16 @@ function validateBudgetAndGates(
   // Check total available points after blocking
   let totalAvailable = 0;
   for (const node of tree.nodes.values()) {
-    if (!neverNodes.has(node.id) && !node.freeNode && !node.entryNode) {
+    if (!neverNodes.has(node.id) && !node.freeNode) {
       totalAvailable += node.maxRanks;
     }
   }
   if (totalAvailable < tree.pointBudget) {
+    const gap = tree.pointBudget - totalAvailable;
     warnings.push({
       severity: "error",
-      message: `Too many blocked talents — only ${totalAvailable} selectable points, need ${tree.pointBudget}`,
+      message: `Blocked too many talents — ${totalAvailable} points selectable, ${tree.pointBudget} needed. Unblock ${gap} points of talents to fix.`,
+      nodeIds: [...neverNodes],
     });
   }
 
@@ -243,7 +258,7 @@ function validateBudgetAndGates(
 
   function mandatoryRanks(nodeId: number): number {
     const node = tree.nodes.get(nodeId);
-    if (!node || node.freeNode || node.entryNode) return 0;
+    if (!node || node.freeNode) return 0;
     const c = constraints.get(nodeId);
     if (c?.exactRank != null) return c.exactRank;
     if (node.type === "choice") return freeNodeCost(node);
@@ -251,7 +266,9 @@ function validateBudgetAndGates(
   }
 
   if (alwaysNodes.size > 0) {
-    // DAG DP by row: cheapest path from any root to each node
+    // DAG DP by row: minimum additional (non-always) cost to connect each
+    // node to a root. Always-nodes have 0 self-cost since they're already
+    // committed; this makes paths through already-selected nodes preferred.
     const minCost = new Map<number, number>();
     const bestPrev = new Map<number, number>();
     const sortedNodes = [...tree.nodes.values()].sort((a, b) => a.row - b.row);
@@ -262,8 +279,9 @@ function validateBudgetAndGates(
         minCost.set(node.id, 0);
         continue;
       }
+      const selfCost = alwaysNodes.has(node.id) ? 0 : mandatoryRanks(node.id);
       if (node.prev.length === 0) {
-        minCost.set(node.id, 1);
+        minCost.set(node.id, selfCost);
         continue;
       }
       let best = Infinity;
@@ -272,15 +290,13 @@ function validateBudgetAndGates(
         if (neverNodes.has(prevId)) continue;
         const pc = minCost.get(prevId);
         if (pc == null) continue;
-        const prevNode = tree.nodes.get(prevId)!;
-        const better = pc < best || (pc === best && prevNode.type !== "choice");
-        if (better) {
+        if (pc < best || (pc === best && alwaysNodes.has(prevId))) {
           best = pc;
           bestP = prevId;
         }
       }
       if (best !== Infinity) {
-        minCost.set(node.id, best + 1);
+        minCost.set(node.id, best + selfCost);
         bestPrev.set(node.id, bestP);
       }
     }
@@ -300,9 +316,11 @@ function validateBudgetAndGates(
     }
 
     if (totalForced > tree.pointBudget) {
+      const gap = totalForced - tree.pointBudget;
       warnings.push({
         severity: "error",
-        message: `Required talents + prerequisites need ${totalForced} points, but only ${tree.pointBudget} available`,
+        message: `${nameList(tree, alwaysNodes)} and their prerequisites need ${totalForced} points — exceeds the ${tree.pointBudget}-point budget by ${gap}`,
+        nodeIds: [...forcedNodes],
       });
     }
   }
@@ -317,12 +335,14 @@ function validateBudgetAndGates(
     // Forced points before/after gate
     let forcedBefore = 0;
     let forcedAfter = 0;
+    const forcedAfterIds: number[] = [];
     for (const nodeId of forcedNodes) {
       const node = tree.nodes.get(nodeId)!;
       if (node.row < gate.row) {
         forcedBefore += mandatoryRanks(nodeId);
       } else {
         forcedAfter += mandatoryRanks(nodeId);
+        forcedAfterIds.push(nodeId);
       }
     }
 
@@ -332,42 +352,52 @@ function validateBudgetAndGates(
       const availableAfter = tree.pointBudget - minBefore;
       warnings.push({
         severity: "error",
-        message: `Required talents after gate need ${forcedAfter} points, but only ${availableAfter} available (${tree.pointBudget} budget − ${minBefore} before gate)`,
+        message: `Required talents after row ${gate.row} need ${forcedAfter} points, but only ${availableAfter} remain after the gate (${tree.pointBudget} budget − ${minBefore} before gate)`,
+        nodeIds: forcedAfterIds,
       });
     }
 
     // Enough selectable nodes before gate to pass it
     let availableBefore = 0;
+    const neverBeforeGate: number[] = [];
     for (const node of tree.nodes.values()) {
-      if (node.row < gate.row && !neverNodes.has(node.id)) {
-        availableBefore += node.maxRanks;
+      if (node.row < gate.row) {
+        if (neverNodes.has(node.id)) {
+          neverBeforeGate.push(node.id);
+        } else {
+          availableBefore += node.maxRanks;
+        }
       }
     }
     if (availableBefore < gate.requiredPoints) {
+      const gap = gate.requiredPoints - availableBefore;
       warnings.push({
         severity: "error",
-        message: `Not enough talents before gate (need ${gate.requiredPoints}, only ${availableBefore} available)`,
+        message: `Need ${gate.requiredPoints} points before row ${gate.row} gate, but only ${availableBefore} selectable — unblock at least ${gap} more points`,
+        nodeIds: neverBeforeGate,
       });
     }
 
     // Enough selectable nodes after gate to fill remaining budget
     if (neverNodes.size > 0) {
       let availableAfterGate = 0;
+      const neverAfterGate: number[] = [];
       for (const node of tree.nodes.values()) {
-        if (
-          node.row >= gate.row &&
-          !neverNodes.has(node.id) &&
-          !node.freeNode &&
-          !node.entryNode
-        ) {
-          availableAfterGate += node.maxRanks;
+        if (node.row >= gate.row && !node.freeNode) {
+          if (neverNodes.has(node.id)) {
+            neverAfterGate.push(node.id);
+          } else {
+            availableAfterGate += node.maxRanks;
+          }
         }
       }
       const pointsNeededAfter = tree.pointBudget - adjustedGateReq;
       if (availableAfterGate < pointsNeededAfter) {
+        const gap = pointsNeededAfter - availableAfterGate;
         warnings.push({
           severity: "error",
-          message: `Not enough selectable talents after gate (${availableAfterGate} available, need ${pointsNeededAfter} to fill budget)`,
+          message: `Only ${availableAfterGate} points selectable after row ${gate.row} gate, need ${pointsNeededAfter} — unblock at least ${gap} more points after the gate`,
+          nodeIds: neverAfterGate,
         });
       }
     }
@@ -480,8 +510,9 @@ function countDP(
     }
 
     const isNever = neverNodes.has(node.id);
-    // Entry nodes are pre-selected in WoW — force them to always be taken
-    const isAlways = alwaysNodes.has(node.id) || node.entryNode;
+    // Entry and free nodes are pre-selected in WoW — force them to always be taken
+    const isAlways =
+      alwaysNodes.has(node.id) || node.entryNode || node.freeNode;
     const constraint = constraints.get(node.id);
     const isTracked = ancestorBitIndex.has(node.id);
 
@@ -614,7 +645,7 @@ export function countTreeBuilds(
     if (node && !reachable.has(nodeId)) {
       warnings.push({
         severity: "error",
-        message: `"${node.name}" is required but unreachable — blocked by Never constraints`,
+        message: `"${node.name}" can't be reached — all paths to it are blocked`,
         nodeIds: [nodeId],
       });
       hasUnreachable = true;
@@ -794,9 +825,10 @@ function buildSuffixTables(
     const gateReq =
       tierFirstIndex.get(node.row) === i ? (gateAtRow.get(node.row) ?? 0) : 0;
     const isNever = neverNodes.has(node.id);
-    const isAlways = alwaysNodes.has(node.id) || node.entryNode;
+    const isAlways =
+      alwaysNodes.has(node.id) || node.entryNode || node.freeNode;
     const constraint = constraints.get(node.id);
-    const isFree = node.freeNode || node.entryNode;
+    const isFree = node.freeNode;
     const isTracked = permanentBitAssignment.has(node.id);
     const nodeBit = isTracked ? 1 << permanentBitAssignment.get(node.id)! : 0;
 
@@ -872,6 +904,8 @@ function buildSuffixTables(
             let minRank: number, maxRank: number;
             if (constraint?.exactRank != null) {
               minRank = maxRank = constraint.exactRank;
+            } else if (isFree) {
+              minRank = maxRank = node.maxRanks;
             } else {
               minRank = 1;
               maxRank = node.maxRanks;
@@ -951,9 +985,10 @@ function unrankBuild(
   for (let i = 0; i < orderedNodes.length; i++) {
     const node = orderedNodes[i];
     const isNever = neverNodes.has(node.id);
-    const isAlways = alwaysNodes.has(node.id) || node.entryNode;
+    const isAlways =
+      alwaysNodes.has(node.id) || node.entryNode || node.freeNode;
     const constraint = constraints.get(node.id);
-    const isFree = node.freeNode || node.entryNode;
+    const isFree = node.freeNode;
     const isTracked = permanentBitAssignment.has(node.id);
     const nodeBit = isTracked ? 1 << permanentBitAssignment.get(node.id)! : 0;
     const accessible = isAccessibleByBitmap(
@@ -1012,6 +1047,8 @@ function unrankBuild(
       let minRank: number, maxRank: number;
       if (constraint?.exactRank != null) {
         minRank = maxRank = constraint.exactRank;
+      } else if (isFree) {
+        minRank = maxRank = node.maxRanks;
       } else {
         minRank = 1;
         maxRank = node.maxRanks;

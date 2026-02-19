@@ -69,7 +69,7 @@ function computeAdjustedGates(
   return tree.gates.map((gate) => {
     let freeInvested = 0;
     for (const node of tree.nodes.values()) {
-      if (node.row < gate.row && (node.entryNode || node.freeNode)) {
+      if (node.row < gate.row && node.freeNode) {
         freeInvested +=
           node.type === "choice"
             ? Math.min(...node.entries.map((e) => e.maxRanks))
@@ -146,7 +146,8 @@ function traverse(
     const node = tierNodes[nodeIdx];
     const accessible = prerequisitesMet(node, build.selected);
 
-    const isNodeAlways = solverState.alwaysNodes.has(node.id) || node.entryNode;
+    const isNodeAlways =
+      solverState.alwaysNodes.has(node.id) || node.entryNode || node.freeNode;
 
     if (solverState.neverNodes.has(node.id)) {
       if (isNodeAlways) return;
@@ -182,7 +183,7 @@ function traverse(
         const b = cloneBuild(build);
         b.selected.set(node.id, entry.maxRanks);
         b.entries.set(entry.id, entry.maxRanks);
-        if (!node.freeNode && !node.entryNode) b.pointsSpent += entry.maxRanks;
+        if (!node.freeNode) b.pointsSpent += entry.maxRanks;
         if (b.pointsSpent <= tree.pointBudget) {
           enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b);
         }
@@ -194,6 +195,8 @@ function traverse(
       let minRank: number, maxRank: number;
       if (constraint?.exactRank != null) {
         minRank = maxRank = constraint.exactRank;
+      } else if (node.freeNode) {
+        minRank = maxRank = node.maxRanks;
       } else {
         minRank = isNodeAlways ? 1 : 0;
         maxRank = node.maxRanks;
@@ -205,7 +208,7 @@ function traverse(
         if (rank > 0 && entry) {
           b.entries.set(entry.id, rank);
         }
-        if (!node.freeNode && !node.entryNode) b.pointsSpent += rank;
+        if (!node.freeNode) b.pointsSpent += rank;
         if (b.pointsSpent <= tree.pointBudget) {
           enumerateTier(tierIdx, nodeIdx + 1, tierNodes, b);
         }
