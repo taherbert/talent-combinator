@@ -45,7 +45,6 @@ export class CombinationCounter {
     this.errorsEl.appendChild(this.errorsInner);
     this.el.appendChild(this.errorsEl);
 
-    // Count + breakdown inline
     const countDisplay = document.createElement("div");
     countDisplay.className = "count-display";
 

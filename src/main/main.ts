@@ -11,6 +11,7 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 700,
     title: "Talent Combinator",
+    icon: join(__dirname, "../../build/icon.png"),
     webPreferences: {
       preload: join(__dirname, "../preload/preload.js"),
       contextIsolation: true,

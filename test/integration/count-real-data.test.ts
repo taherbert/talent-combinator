@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { countTreeBuilds } from "../../src/shared/build-counter";
 import { parseSpecializations } from "../../src/main/data/parser";
 import type { RawSpecData, TalentTree } from "../../src/shared/types";
 
-const rawData: RawSpecData[] = JSON.parse(
-  readFileSync("/tmp/claude/talents.json", "utf-8"),
-);
+const DATA_PATH =
+  process.env.TALENT_DATA_PATH || "./test/fixtures/talents.json";
+const HAS_DATA = existsSync(DATA_PATH);
 
 function treeInfo(tree: TalentTree): string {
   const entryNodes = [...tree.nodes.values()].filter((n) => n.entryNode).length;
@@ -19,7 +19,10 @@ function treeInfo(tree: TalentTree): string {
   return `${tree.nodes.size} nodes, ${entryNodes} entry, ${freeNodes} free, budget=${tree.pointBudget}, ${tree.gates.length} gates, ${ancestorIds.size} ancestors`;
 }
 
-describe("real data", () => {
+describe.skipIf(!HAS_DATA)("real data", () => {
+  const rawData: RawSpecData[] = HAS_DATA
+    ? JSON.parse(readFileSync(DATA_PATH, "utf-8"))
+    : [];
   const specs = parseSpecializations(rawData);
 
   it("parses data", () => {

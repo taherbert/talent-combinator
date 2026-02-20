@@ -48,10 +48,8 @@ export class TalentNodeView {
     bgShape.classList.add("node-bg");
     this.group.appendChild(bgShape);
 
-    // Placeholder icon
     this.addPlaceholderIcon();
 
-    // Clip path for icon
     const defs = document.createElementNS(SVG_NS, "defs");
     const clipPath = document.createElementNS(SVG_NS, "clipPath");
     clipPath.setAttribute("id", this.clipId);
@@ -103,7 +101,6 @@ export class TalentNodeView {
       this.group.appendChild(this.rankBadge);
     }
 
-    // Choice indicator — top-left pill matching rank badge style
     if (node.type === "choice" && !node.isApex) {
       this.group.classList.add("choice-node");
       const badge = document.createElementNS(SVG_NS, "g");
@@ -143,7 +140,6 @@ export class TalentNodeView {
       this.createEitherOverlay();
     }
 
-    // Name label below node
     const displayName = node.name || "Unknown";
     const nameText = document.createElementNS(SVG_NS, "text");
     nameText.classList.add("node-name");
@@ -155,10 +151,8 @@ export class TalentNodeView {
         : displayName;
     this.group.appendChild(nameText);
 
-    // Preload icons
     this.preloadIcons();
 
-    // Events
     this.group.addEventListener("click", (e) => this.onClick(node, e));
     this.group.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -366,7 +360,6 @@ export class TalentNodeView {
     this.conditionBadge.style.display =
       nodeState === "conditional" ? "" : "none";
 
-    // Update rank badge text for multi-rank nodes
     if (this.rankText && this.node.maxRanks > 1) {
       if (constraint?.type === "always" && constraint.exactRank != null) {
         this.rankText.textContent = `${constraint.exactRank}/${this.node.maxRanks}`;
