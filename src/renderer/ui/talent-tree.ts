@@ -9,6 +9,7 @@ import type {
   NodeState,
   Constraint,
   SpellTooltip,
+  BooleanExpr,
 } from "../../shared/types";
 import {
   NODE_SIZE,
@@ -434,6 +435,13 @@ export class TalentTreeView {
       statusDiv.className = `tooltip-status status-${constraint.type}`;
       statusDiv.textContent = this.constraintLabel(constraint, node);
       tooltip.appendChild(statusDiv);
+
+      if (constraint.type === "conditional" && constraint.condition) {
+        const condEl = document.createElement("div");
+        condEl.className = "tooltip-condition";
+        condEl.textContent = this.conditionText(constraint.condition);
+        tooltip.appendChild(condEl);
+      }
     }
 
     this.tooltipEl.innerHTML = "";
@@ -508,6 +516,36 @@ export class TalentTreeView {
       return `always at ${constraint.exactRank}/${node.maxRanks}`;
     }
     return "always";
+  }
+
+  private conditionText(expr: BooleanExpr): string {
+    const name = (nodeId: number): string => {
+      const spec = state.activeSpec;
+      if (!spec) return `Node ${nodeId}`;
+      const node =
+        spec.classTree.nodes.get(nodeId) ??
+        spec.specTree.nodes.get(nodeId) ??
+        state.activeHeroTree?.nodes.get(nodeId);
+      return node?.name ?? `Node ${nodeId}`;
+    };
+
+    const format = (e: BooleanExpr): string => {
+      if (e.op === "TALENT_SELECTED") return name(e.nodeId);
+      const joiner = e.op === "AND" ? " and " : " or ";
+      const parts = e.children.map((c) => {
+        if (c.op !== "TALENT_SELECTED" && c.op !== e.op)
+          return `(${format(c)})`;
+        return format(c);
+      });
+      return parts.join(joiner);
+    };
+
+    const text = format(expr);
+    const singular =
+      expr.op === "TALENT_SELECTED" ||
+      (expr.op === "OR" &&
+        expr.children.every((c) => c.op === "TALENT_SELECTED"));
+    return `if ${text} ${singular ? "is" : "are"} selected`;
   }
 
   private updateNodeStates(): void {

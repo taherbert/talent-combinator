@@ -372,6 +372,13 @@
   color: var(--color-amber);
 }
 
+.talent-tooltip .tooltip-condition {
+  color: var(--color-amber);
+  font-size: 11px;
+  font-style: italic;
+  margin-top: 2px;
+}
+
 /* Node popover (choice/multi-rank) */
 .node-popover {
   position: fixed;
