@@ -3,57 +3,8 @@ import {
   generateTreeBuilds,
   countTreeBuilds,
 } from "../../src/shared/build-counter";
-import type {
-  TalentTree,
-  TalentNode,
-  TalentEntry,
-  Constraint,
-} from "../../src/shared/types";
-
-function makeEntry(id: number, maxRanks = 1): TalentEntry {
-  return { id, name: `Entry ${id}`, maxRanks, index: 0, icon: "" };
-}
-
-function makeNode(id: number, opts: Partial<TalentNode> = {}): TalentNode {
-  return {
-    id,
-    name: `Node ${id}`,
-    icon: "",
-    type: "single",
-    maxRanks: 1,
-    entries: [makeEntry(id * 100)],
-    next: [],
-    prev: [],
-    reqPoints: 0,
-    row: 0,
-    col: 0,
-    freeNode: false,
-    entryNode: false,
-    isApex: false,
-    ...opts,
-  };
-}
-
-function makeTree(
-  nodes: TalentNode[],
-  overrides: Partial<TalentTree> = {},
-): TalentTree {
-  const nodeMap = new Map<number, TalentNode>();
-  for (const n of nodes) nodeMap.set(n.id, n);
-
-  let maxPoints = 0;
-  for (const n of nodes) maxPoints += n.maxRanks;
-
-  return {
-    type: "class",
-    nodes: nodeMap,
-    gates: [],
-    maxPoints,
-    pointBudget: maxPoints,
-    totalNodes: nodes.length,
-    ...overrides,
-  };
-}
+import type { Constraint, BooleanExpr } from "../../src/shared/types";
+import { makeEntry, makeNode, makeTree } from "./test-helpers";
 
 /** Encode a build as a sorted "entryId:points" string for comparison. */
 function encodeForTest(build: { entries: Map<number, number> }): string {
@@ -265,5 +216,108 @@ describe("generateTreeBuilds", () => {
     const limited = generateTreeBuilds(tree, constraints, 3);
     expect(all.length).toBe(Number(count));
     expect(limited.length).toBe(3);
+  });
+});
+
+describe("conditional constraint generation", () => {
+  function sel(nodeId: number): BooleanExpr {
+    return { op: "TALENT_SELECTED", nodeId };
+  }
+
+  /** Check that condition_met → target_selected for all builds. */
+  function checkConditionalValidity(
+    builds: { entries: Map<number, number> }[],
+    targetEntryId: number,
+    triggerEntryIds: number[],
+    logic: "or" | "and" = "or",
+  ): void {
+    for (const build of builds) {
+      const triggerValues = triggerEntryIds.map(
+        (id) => (build.entries.get(id) ?? 0) > 0,
+      );
+      const conditionMet =
+        logic === "or"
+          ? triggerValues.some(Boolean)
+          : triggerValues.every(Boolean);
+      if (conditionMet) {
+        expect(build.entries.get(targetEntryId) ?? 0).toBeGreaterThan(0);
+      }
+    }
+  }
+
+  it("count matches generation count with conditionals", () => {
+    const tree = makeTree([makeNode(1), makeNode(2), makeNode(3)], {
+      pointBudget: 2,
+    });
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: sel(1) }],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+  });
+
+  it("no generated build violates conditional constraint", () => {
+    const tree = makeTree([makeNode(1), makeNode(2), makeNode(3)], {
+      pointBudget: 2,
+    });
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: sel(1) }],
+    ]);
+    const builds = generateTreeBuilds(tree, constraints);
+    // Entry IDs: node 1 → 100, node 2 → 200
+    checkConditionalValidity(builds, 200, [100]);
+  });
+
+  it("limited generation only returns valid builds", () => {
+    const tree = makeTree(
+      [makeNode(1), makeNode(2), makeNode(3), makeNode(4)],
+      { pointBudget: 2 },
+    );
+    const cond: BooleanExpr = { op: "OR", children: [sel(1), sel(2)] };
+    const constraints = new Map<number, Constraint>([
+      [3, { nodeId: 3, type: "conditional", condition: cond }],
+    ]);
+    const builds = generateTreeBuilds(tree, constraints, 2);
+    expect(builds.length).toBe(2);
+    checkConditionalValidity(builds, 300, [100, 200]);
+  });
+
+  it("multi-rank ancestor trigger: count matches generation", () => {
+    // A (maxRanks=2, parent of C), B standalone. Conditional: if A → B.
+    // Exercises the needsSeparateBit path (multi-rank ancestor as trigger).
+    const a = makeNode(1, {
+      maxRanks: 2,
+      entries: [makeEntry(100, 2)],
+      row: 0,
+      next: [3],
+    });
+    const b = makeNode(2, { row: 0 });
+    const c = makeNode(3, { row: 1, prev: [1] });
+    const tree = makeTree([a, b, c], { pointBudget: 2 });
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: sel(1) }],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+    checkConditionalValidity(builds, 200, [100]);
+  });
+
+  it("AND conditional: all generated builds satisfy AND condition", () => {
+    const tree = makeTree([makeNode(1), makeNode(2), makeNode(3)], {
+      pointBudget: 2,
+    });
+    const cond: BooleanExpr = {
+      op: "AND",
+      children: [sel(1), sel(2)],
+    };
+    const constraints = new Map<number, Constraint>([
+      [3, { nodeId: 3, type: "conditional", condition: cond }],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+    checkConditionalValidity(builds, 300, [100, 200], "and");
   });
 });

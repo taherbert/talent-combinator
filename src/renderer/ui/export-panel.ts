@@ -21,6 +21,7 @@ type ExportFormat = "simc" | "hash";
 
 export class ExportPanel {
   private generateBtn: HTMLButtonElement;
+  private hintEl: HTMLElement;
   private dialogContainer: HTMLElement;
   private format: ExportFormat = "simc";
   private simcBtn!: HTMLButtonElement;
@@ -54,6 +55,10 @@ export class ExportPanel {
     this.generateBtn.addEventListener("click", () => this.generate());
     actionsEl.appendChild(this.generateBtn);
 
+    this.hintEl = document.createElement("span");
+    this.hintEl.className = "export-hint";
+    actionsEl.appendChild(this.hintEl);
+
     counterBar.appendChild(actionsEl);
     this.dialogContainer = document.getElementById("dialog-container")!;
 
@@ -75,7 +80,16 @@ export class ExportPanel {
   private updateButtonState(): void {
     const total = this.lastTotal;
     const MAX_BIG = BigInt(MAX_PROFILESETS);
-    this.generateBtn.disabled = total <= 0n || total > MAX_BIG;
+    if (this.format === "simc") {
+      this.generateBtn.disabled = total <= 0n || total > MAX_BIG;
+      this.hintEl.textContent = "";
+    } else {
+      const specId = state.activeSpec?.specId;
+      const hasHash = specId != null && state.getTreeHash(specId) != null;
+      const noHash = total > 0n && !hasHash;
+      this.generateBtn.disabled = total <= 0n || !hasHash || total > MAX_BIG;
+      this.hintEl.textContent = noHash ? "Import a talent hash to enable" : "";
+    }
   }
 
   private async generate(): Promise<void> {
@@ -160,7 +174,8 @@ export class ExportPanel {
 
     const specId = spec.specId;
     if (specId == null) return "";
-    const treeHashBytes = state.getTreeHash(specId) ?? new Array(16).fill(0);
+    const treeHashBytes = state.getTreeHash(specId);
+    if (!treeHashBytes) return "";
 
     const entryLookups = trees.map((tree) =>
       buildEntryLookup(tree.nodes.values()),

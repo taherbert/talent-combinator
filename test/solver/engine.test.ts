@@ -1,57 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { countTreeBuilds } from "../../src/shared/build-counter";
 import { generateBuilds } from "../../src/worker/solver/engine";
-import type {
-  TalentTree,
-  TalentNode,
-  TalentEntry,
-  Constraint,
-} from "../../src/shared/types";
-
-function makeEntry(id: number, maxRanks = 1): TalentEntry {
-  return { id, name: `Entry ${id}`, maxRanks, index: 0, icon: "" };
-}
-
-function makeNode(id: number, opts: Partial<TalentNode> = {}): TalentNode {
-  return {
-    id,
-    name: `Node ${id}`,
-    icon: "",
-    type: "single",
-    maxRanks: 1,
-    entries: [makeEntry(id * 100)],
-    next: [],
-    prev: [],
-    reqPoints: 0,
-    row: 0,
-    col: 0,
-    freeNode: false,
-    entryNode: false,
-    isApex: false,
-    ...opts,
-  };
-}
-
-function makeTree(
-  nodes: TalentNode[],
-  overrides: Partial<TalentTree> = {},
-): TalentTree {
-  const nodeMap = new Map<number, TalentNode>();
-  for (const n of nodes) nodeMap.set(n.id, n);
-
-  let maxPoints = 0;
-  for (const n of nodes) maxPoints += n.maxRanks;
-
-  return {
-    type: "class",
-    nodes: nodeMap,
-    gates: [],
-    maxPoints,
-    pointBudget: maxPoints,
-    totalNodes: nodes.length,
-    ...overrides,
-  };
-}
+import type { Constraint } from "../../src/shared/types";
+import { makeEntry, makeNode, makeTree } from "./test-helpers";
 
 describe("countTreeBuilds", () => {
   it("picks subset when budget < total nodes", () => {
