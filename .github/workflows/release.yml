@@ -5,19 +5,9 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-          - os: windows-latest
-          - os: ubuntu-latest
-
-    runs-on: ${{ matrix.os }}
+  check:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -37,6 +27,31 @@ jobs:
 
       - name: Test
         run: npm test
+
+  build:
+    needs: check
+
+    permissions:
+      contents: write
+
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build
         run: npx electron-vite build

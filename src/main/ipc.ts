@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow, net } from "electron";
+import { app, ipcMain, dialog, BrowserWindow, net } from "electron";
 import { readFileSync, writeFileSync } from "fs";
 import { fetchTalentJSON } from "./data/raidbots-client";
 import { readCache, writeCache } from "./data/cache";
@@ -218,7 +218,5 @@ export function registerIPC(): void {
     }
   });
 
-  ipcMain.handle("get-app-version", () => {
-    return require("../../package.json").version;
-  });
+  ipcMain.handle("get-app-version", () => app.getVersion());
 }

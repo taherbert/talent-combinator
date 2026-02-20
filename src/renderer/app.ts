@@ -761,7 +761,7 @@ electronAPI.onUpdateDownloaded((version) => {
   banner.textContent = `v${version} available`;
   const btn = document.createElement("button");
   btn.textContent = "Restart to update";
-  btn.addEventListener("click", () => electronAPI.installUpdate());
+  btn.addEventListener("click", electronAPI.installUpdate);
   banner.appendChild(btn);
   document.getElementById("app")!.prepend(banner);
 });

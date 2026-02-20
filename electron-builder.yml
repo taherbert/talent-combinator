@@ -21,3 +21,4 @@ linux:
     - deb
 publish:
   provider: github
+  releaseType: release
