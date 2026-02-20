@@ -15,7 +15,6 @@ mac:
 win:
   target:
     - nsis
-    - portable
 linux:
   target:
     - AppImage
