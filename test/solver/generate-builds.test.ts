@@ -235,9 +235,9 @@ describe("generateTreeBuilds", () => {
   });
 
   it("with gate: nodes in later tier require spending enough points first", () => {
-    const nodeA = makeNode(1, { row: 0 });
-    const nodeB = makeNode(2, { row: 0 });
-    const nodeC = makeNode(3, { row: 2, prev: [] }); // gated
+    const nodeA = makeNode(1, { row: 0, reqPoints: 0 });
+    const nodeB = makeNode(2, { row: 0, reqPoints: 0 });
+    const nodeC = makeNode(3, { row: 2, reqPoints: 2, prev: [] }); // gated
     const tree = makeTree([nodeA, nodeB, nodeC], {
       pointBudget: 2,
       gates: [{ row: 2, requiredPoints: 2 }],
