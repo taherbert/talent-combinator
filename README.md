@@ -27,6 +27,12 @@ npm install
 npm run dev
 ```
 
+**macOS note:** The release builds are not code-signed. After installing, you may need to remove the quarantine attribute:
+
+```bash
+xattr -cr "/Applications/Talent Combinator.app"
+```
+
 ## Building from source
 
 Prerequisites: [Node.js](https://nodejs.org/) 20+
@@ -49,7 +55,7 @@ The solver runs in a Web Worker to keep the UI responsive. Counting is sub-milli
 ## Acknowledgments
 
 - [Raidbots](https://www.raidbots.com/) for the talent data API
-- [Talent Tree Manager](https://www.raidbots.com/simbot/talents) by Raidbots for UI inspiration
+- [WoW Talent Tree Manager](https://github.com/TobiasM95/WoW-Talent-Tree-Manager) by TobiasM95 for inspiration
 - [simc-talent-generator](https://github.com/vituscze/simc-talent-generator) by Norrinir for inspiration
 
 ## License
