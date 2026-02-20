@@ -551,11 +551,6 @@
   background: var(--bg-secondary);
 }
 
-.export-hint {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
 .btn {
   display: inline-flex;
   align-items: center;
