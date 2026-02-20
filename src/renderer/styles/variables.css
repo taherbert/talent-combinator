@@ -23,6 +23,9 @@
   --color-amber-dim: rgba(210, 153, 34, 0.15);
   --color-blue: #58a6ff;
   --color-blue-dim: rgba(88, 166, 255, 0.15);
+  --color-green-dark: #1a3020;
+  --color-red-dark: #301a1a;
+  --tooltip-bg: #1c2128;
 
   /* Node states */
   --node-locked: #484f58;

@@ -78,7 +78,6 @@ export class TalentTreeView {
     header.appendChild(titleSpan);
     section.appendChild(header);
 
-    // Constraint summary bar
     this.summaryEl = document.createElement("div");
     this.summaryEl.className = "tree-constraint-summary";
     section.appendChild(this.summaryEl);
@@ -86,7 +85,6 @@ export class TalentTreeView {
     const svgContainer = document.createElement("div");
     svgContainer.className = "tree-svg-container";
 
-    // Compute layout bounds
     let minCol = Infinity,
       maxCol = -Infinity;
     let minRow = Infinity,
@@ -107,9 +105,7 @@ export class TalentTreeView {
     svg.setAttribute("height", String(height));
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-    // Tier gate lines in SVG
     const gateGroup = document.createElementNS(SVG_NS, "g");
-    // Gate labels as HTML, outside tree-section (sibling column)
     const gateLabelsEl = document.createElement("div");
     gateLabelsEl.className = "tree-gate-labels";
 
@@ -137,11 +133,9 @@ export class TalentTreeView {
       gateLabelsEl.appendChild(label);
     }
 
-    // Connectors
     const connectorGroup = document.createElementNS(SVG_NS, "g");
     connectorGroup.classList.add("connectors");
 
-    // Nodes
     const nodeGroup = document.createElementNS(SVG_NS, "g");
     nodeGroup.classList.add("nodes");
 
@@ -162,7 +156,6 @@ export class TalentTreeView {
       nodeGroup.appendChild(view.group);
     }
 
-    // Draw connector lines
     for (const node of tree.nodes.values()) {
       const fromView = this.nodeViews.get(node.id);
       if (!fromView) continue;

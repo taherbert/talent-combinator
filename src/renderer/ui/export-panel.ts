@@ -260,7 +260,6 @@ export class ExportPanel {
         });
       }
 
-      // Merge builds from each tree
       for (let i = 0; i < allBuilds.length; i++) {
         const build = allBuilds[i][indices[i]];
         const lookup = entryLookups[i];

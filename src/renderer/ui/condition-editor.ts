@@ -67,8 +67,6 @@ export class ConditionEditor {
     }
   }
 
-  // --- Load / Save conversion ---
-
   private loadCondition(expr: BooleanExpr): void {
     this.groups = [];
     this.mode = "any";
@@ -145,8 +143,6 @@ export class ConditionEditor {
       state.activeHeroTree?.nodes.get(nodeId);
     return node?.name ?? `Node ${nodeId}`;
   }
-
-  // --- Rendering ---
 
   private render(): void {
     if (!this.panel || !this.currentNode) return;
@@ -266,7 +262,6 @@ export class ConditionEditor {
     const card = document.createElement("div");
     card.className = "cond-group-card";
 
-    // Delete group button (top-right)
     if (this.groups.length > 1 || group.talents.length > 1) {
       const deleteBtn = document.createElement("button");
       deleteBtn.className = "cond-group-delete";
@@ -279,7 +274,6 @@ export class ConditionEditor {
       card.appendChild(deleteBtn);
     }
 
-    // Talent items
     for (let ti = 0; ti < group.talents.length; ti++) {
       const talent = group.talents[ti];
       const item = document.createElement("div");
@@ -318,7 +312,6 @@ export class ConditionEditor {
       card.appendChild(item);
     }
 
-    // "+ Add condition" button
     const addBtn = document.createElement("button");
     addBtn.className = "cond-add-condition";
     addBtn.textContent = "+ Add condition";
@@ -527,8 +520,6 @@ export class ConditionEditor {
 
     return footer;
   }
-
-  // --- Persistence ---
 
   private talentLeaf(nodeId: number): BooleanExpr {
     return { op: "TALENT_SELECTED", nodeId };

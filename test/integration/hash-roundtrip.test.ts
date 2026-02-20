@@ -12,11 +12,12 @@ import type { NodeSelection } from "../../src/renderer/hash-encoder";
 import type {
   RawSpecData,
   Specialization,
-  TalentNode,
   TalentTree,
 } from "../../src/shared/types";
 
-const DATA_PATH = "/tmp/claude/talents.json";
+const DATA_PATH =
+  process.env.TALENT_DATA_PATH || "./test/fixtures/talents.json";
+const HAS_DATA = existsSync(DATA_PATH);
 
 // Known-good Vengeance DH hash from Wowhead/game client (version 2)
 const VENGEANCE_HASH =
@@ -30,7 +31,6 @@ function buildSelectionsFromDecode(
   decoded: HashDecodeResult,
   activeTrees: TalentTree[],
   sameClassSpecs: Specialization[],
-  allNodeMap: Map<number, TalentNode>,
 ): Map<number, NodeSelection> {
   const selections = new Map<number, NodeSelection>();
 
@@ -83,7 +83,9 @@ function buildSelectionsFromDecode(
   return selections;
 }
 
-describe.skipIf(!existsSync(DATA_PATH))("hash round-trip", () => {
+describe.skipIf(!HAS_DATA)("hash round-trip", () => {
+  if (!HAS_DATA) return;
+
   const rawData: RawSpecData[] = JSON.parse(readFileSync(DATA_PATH, "utf-8"));
   const specs = parseSpecializations(rawData);
   const vengeance = specs.find(
@@ -92,11 +94,10 @@ describe.skipIf(!existsSync(DATA_PATH))("hash round-trip", () => {
   const sameClassSpecs = specs.filter(
     (s) => s.className === vengeance.className,
   );
-  const { allNodes, allNodeMap } = buildAllNodesForSpec(sameClassSpecs);
+  const { allNodes } = buildAllNodesForSpec(sameClassSpecs);
 
   const decoded = decodeTalentHash(VENGEANCE_HASH, allNodes)!;
 
-  // Detect active hero tree from subTreeNode entryIndex
   const allSubTreeNodes = sameClassSpecs.flatMap((s) => s.subTreeNodes);
   let activeHeroTree: TalentTree | null = null;
   for (const sel of decoded.selections) {
@@ -130,7 +131,6 @@ describe.skipIf(!existsSync(DATA_PATH))("hash round-trip", () => {
       decoded,
       activeTrees,
       sameClassSpecs,
-      allNodeMap,
     );
 
     const reEncoded = encodeTalentHash(
@@ -155,7 +155,6 @@ describe.skipIf(!existsSync(DATA_PATH))("hash round-trip", () => {
       decoded,
       activeTrees,
       sameClassSpecs,
-      allNodeMap,
     );
 
     const reEncoded = encodeTalentHash(

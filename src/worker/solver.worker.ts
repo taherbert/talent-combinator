@@ -6,7 +6,15 @@ import type {
 } from "../shared/types";
 import { generateBuilds } from "./solver/engine";
 
-// Structured clone converts Maps to plain objects across worker boundaries
+// Structured clone converts Maps to plain objects across worker boundaries.
+// These types represent the post-clone shape where Maps become Records.
+interface SerializedConfig {
+  tree: Omit<TalentTree, "nodes"> & {
+    nodes: Record<string, TalentNode> | Map<number, TalentNode>;
+  };
+  constraints: Record<string, Constraint> | Map<number, Constraint>;
+}
+
 function toNumberKeyedMap<V>(raw: unknown): Map<number, V> {
   const map = new Map<number, V>();
   if (raw instanceof Map) {
@@ -17,7 +25,7 @@ function toNumberKeyedMap<V>(raw: unknown): Map<number, V> {
   return map;
 }
 
-function deserializeConfig(rawConfig: any): {
+function deserializeConfig(rawConfig: SerializedConfig): {
   tree: TalentTree;
   constraints: Map<number, Constraint>;
 } {
