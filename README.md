@@ -27,6 +27,12 @@ npm install
 npm run dev
 ```
 
+**macOS note:** The release builds are not code-signed. After installing, you may need to remove the quarantine attribute:
+
+```bash
+xattr -cr "/Applications/Talent Combinator.app"
+```
+
 ## Building from source
 
 Prerequisites: [Node.js](https://nodejs.org/) 20+
