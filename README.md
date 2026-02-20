@@ -49,6 +49,7 @@ The solver runs in a Web Worker to keep the UI responsive. Counting is sub-milli
 ## Acknowledgments
 
 - [Raidbots](https://www.raidbots.com/) for the talent data API
+- [Talent Tree Manager](https://www.raidbots.com/simbot/talents) by Raidbots for UI inspiration
 - [simc-talent-generator](https://github.com/vituscze/simc-talent-generator) by Norrinir for inspiration
 
 ## License
