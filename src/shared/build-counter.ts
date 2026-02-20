@@ -92,23 +92,16 @@ function freeNodeCost(node: TalentNode): number {
   return node.maxRanks;
 }
 
-// Gate thresholds adjusted for free node investments that don't consume budget.
-// Returns {requiredPoints: raw gate key, adjustedPoints: budget threshold}.
-function computeAdjustedGates(
+// Gate thresholds mapped from reqPoints to the budget-space threshold used by
+// the DP. Free nodes don't count toward gate requirements in WoW, and since
+// the DP only tracks non-free point expenditure, raw thresholds apply directly.
+function computeGateThresholds(
   tree: TalentTree,
-): { requiredPoints: number; adjustedPoints: number }[] {
-  return tree.gates.map((gate) => {
-    let freeInvested = 0;
-    for (const node of tree.nodes.values()) {
-      if (node.reqPoints < gate.requiredPoints && node.freeNode) {
-        freeInvested += freeNodeCost(node);
-      }
-    }
-    return {
-      requiredPoints: gate.requiredPoints,
-      adjustedPoints: Math.max(0, gate.requiredPoints - freeInvested),
-    };
-  });
+): { requiredPoints: number; threshold: number }[] {
+  return tree.gates.map((gate) => ({
+    requiredPoints: gate.requiredPoints,
+    threshold: gate.requiredPoints,
+  }));
 }
 
 interface NodePolyResult {
@@ -321,11 +314,11 @@ function validateBudgetAndGates(
     }
   }
 
-  const adjustedGates = computeAdjustedGates(tree);
+  const gateThresholds = computeGateThresholds(tree);
   for (let gi = 0; gi < tree.gates.length; gi++) {
     const gate = tree.gates[gi];
     if (gate.requiredPoints === 0) continue;
-    const adjustedGateReq = adjustedGates[gi].adjustedPoints;
+    const gateReq = gateThresholds[gi].threshold;
 
     // Forced points before/after gate
     let forcedBefore = 0;
@@ -342,7 +335,7 @@ function validateBudgetAndGates(
     }
 
     // Budget check: gate minimum + forced after must fit in budget
-    const minBefore = Math.max(forcedBefore, adjustedGateReq);
+    const minBefore = Math.max(forcedBefore, gateReq);
     if (forcedAfter > 0 && minBefore + forcedAfter > tree.pointBudget) {
       const availableAfter = tree.pointBudget - minBefore;
       warnings.push({
@@ -386,7 +379,7 @@ function validateBudgetAndGates(
           }
         }
       }
-      const pointsNeededAfter = tree.pointBudget - adjustedGateReq;
+      const pointsNeededAfter = tree.pointBudget - gateReq;
       if (availableAfterGate < pointsNeededAfter) {
         const gap = pointsNeededAfter - availableAfterGate;
         warnings.push({
@@ -474,8 +467,8 @@ function countDP(
   // The DP polynomial only tracks budget-spending points, but gates count
   // total invested including free/entry nodes. Use pre-adjusted thresholds.
   const gateAtReqPoints = new Map<number, number>();
-  for (const gate of computeAdjustedGates(tree)) {
-    gateAtReqPoints.set(gate.requiredPoints, gate.adjustedPoints);
+  for (const gate of computeGateThresholds(tree)) {
+    gateAtReqPoints.set(gate.requiredPoints, gate.threshold);
   }
 
   const polyCache = new Map<string, NodePolyResult>();
@@ -776,8 +769,8 @@ function computeLayout(tree: TalentTree): TreeLayout {
   }
 
   const gateAtReqPoints = new Map<number, number>();
-  for (const gate of computeAdjustedGates(tree))
-    gateAtReqPoints.set(gate.requiredPoints, gate.adjustedPoints);
+  for (const gate of computeGateThresholds(tree))
+    gateAtReqPoints.set(gate.requiredPoints, gate.threshold);
 
   const tierFirstIndex = new Map<number, number>();
   let currentReq = -1;
