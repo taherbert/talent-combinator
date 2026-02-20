@@ -552,8 +552,34 @@ function countDP(
           mergePoly(newDp, bitmap, poly, budget);
         }
         if (selectPoly != null) {
-          const conv = polyConvolve(poly, selectPoly, budget);
-          mergePoly(newDp, bitmap | nodeBit, conv, budget);
+          if (node.maxRanks > 1) {
+            // WoW only unlocks children when fully invested (all ranks filled).
+            // Split: partial ranks don't set the bit, full rank does.
+            const fullCost = node.freeNode ? 0 : node.maxRanks;
+            const partialPoly = selectPoly.slice(0, fullCost);
+            if (partialPoly.some((c) => c > 0)) {
+              mergePoly(
+                newDp,
+                bitmap,
+                polyConvolve(poly, partialPoly, budget),
+                budget,
+              );
+            }
+            const fullCoeff = selectPoly[fullCost] ?? 0;
+            if (fullCoeff > 0) {
+              const fullPoly = new Array(fullCost + 1).fill(0);
+              fullPoly[fullCost] = fullCoeff;
+              mergePoly(
+                newDp,
+                bitmap | nodeBit,
+                polyConvolve(poly, fullPoly, budget),
+                budget,
+              );
+            }
+          } else {
+            const conv = polyConvolve(poly, selectPoly, budget);
+            mergePoly(newDp, bitmap | nodeBit, conv, budget);
+          }
         }
       } else if (selectPoly != null) {
         const nodePoly = skipPoly
@@ -841,8 +867,9 @@ function buildSuffixTables(
     }
 
     // Collect all incoming bitmaps at step i by working backward from suffix[i+1].
-    // A bitmap at step i transitions to step i+1 via: (bitmapIn | possibly nodeBit) & ~retireMask.
-    // Note: nodeBit is never in retireMask (a node can't be its own last consumer).
+    // Transitions: skip/partial-select → bitmapIn & ~retireMask (no nodeBit),
+    // full-select → (bitmapIn | nodeBit) & ~retireMask.
+    // nodeBit is never in retireMask (a node can't be its own last consumer).
     const bitmapsNeeded = new Set<number>();
     for (const bmNext of suffix[i + 1].keys()) {
       if (isTracked && bmNext & nodeBit) {
@@ -914,7 +941,9 @@ function buildSuffixTables(
               const cost = isFree ? 0 : rank;
               if (r >= cost) {
                 const bmNext =
-                  (isTracked ? bitmapIn | nodeBit : bitmapIn) & ~retireMask;
+                  (isTracked && rank === node.maxRanks
+                    ? bitmapIn | nodeBit
+                    : bitmapIn) & ~retireMask;
                 total += suffixLookup(suffix[i + 1], bmNext, r - cost);
               }
             }
@@ -941,7 +970,9 @@ function buildSuffixTables(
               const cost = isFree ? 0 : constraint.exactRank;
               if (r >= cost) {
                 const bmNext =
-                  (isTracked ? bitmapIn | nodeBit : bitmapIn) & ~retireMask;
+                  (isTracked && constraint.exactRank === node.maxRanks
+                    ? bitmapIn | nodeBit
+                    : bitmapIn) & ~retireMask;
                 total += suffixLookup(suffix[i + 1], bmNext, r - cost);
               }
             } else {
@@ -949,7 +980,9 @@ function buildSuffixTables(
                 const cost = isFree ? 0 : rank;
                 if (r >= cost) {
                   const bmNext =
-                    (isTracked ? bitmapIn | nodeBit : bitmapIn) & ~retireMask;
+                    (isTracked && rank === node.maxRanks
+                      ? bitmapIn | nodeBit
+                      : bitmapIn) & ~retireMask;
                   total += suffixLookup(suffix[i + 1], bmNext, r - cost);
                 }
               }
@@ -1056,7 +1089,9 @@ function unrankBuild(
       for (let rank = minRank; rank <= maxRank; rank++) {
         const cost = isFree ? 0 : rank;
         if (r >= cost) {
-          const bmNext = (isTracked ? bitmap | nodeBit : bitmap) & ~retireMask;
+          const bmNext =
+            (isTracked && rank === node.maxRanks ? bitmap | nodeBit : bitmap) &
+            ~retireMask;
           const count = suffixLookup(suffix[i + 1], bmNext, r - cost);
           if (k < count) {
             if (entry) entries.set(entry.id, rank);
