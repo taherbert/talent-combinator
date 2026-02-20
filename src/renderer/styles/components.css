@@ -186,12 +186,12 @@
 }
 
 .talent-node.always .rank-pill-bg {
-  fill: #1a3020;
+  fill: var(--color-green-dark);
   stroke: var(--color-green);
 }
 
 .talent-node.never .rank-pill-bg {
-  fill: #301a1a;
+  fill: var(--color-red-dark);
   stroke: var(--color-red);
 }
 
@@ -311,7 +311,7 @@
   z-index: 1000;
   max-width: 360px;
   padding: 10px 14px;
-  background: #1c2128;
+  background: var(--tooltip-bg);
   border: 1px solid var(--border-default);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
@@ -521,11 +521,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.generate-hint {
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
 .format-toggle {
@@ -1040,7 +1035,6 @@
   font-style: italic;
 }
 
-/* Footer */
 .cond-footer {
   display: flex;
   align-items: center;

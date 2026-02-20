@@ -43,7 +43,6 @@
   -webkit-app-region: no-drag;
 }
 
-/* Sidebar toggle button */
 .sidebar-toggle {
   display: none;
   -webkit-app-region: no-drag;
@@ -66,7 +65,6 @@
   display: inline-flex;
 }
 
-/* Sidebar as overlay */
 .sidebar {
   position: fixed;
   top: var(--header-height);
@@ -130,7 +128,6 @@
   display: flex;
 }
 
-/* Instructions bar */
 .instructions-bar {
   align-self: stretch;
   padding: 6px 12px;
@@ -200,7 +197,6 @@
   flex-shrink: 0;
 }
 
-/* Tree sections */
 .tree-section {
   background: var(--bg-secondary);
   border: 1px solid var(--border-default);

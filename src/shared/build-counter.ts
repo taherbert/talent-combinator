@@ -7,8 +7,6 @@ import type {
   CountWarning,
 } from "./types";
 
-// --- Polynomial helpers ---
-
 type Poly = number[];
 
 function polyConvolve(a: Poly, b: Poly, maxDeg: number): Poly {
@@ -63,8 +61,6 @@ function enforceGate(
   return newDp;
 }
 
-// --- Shared tree helpers ---
-
 function buildTiers(tree: TalentTree): {
   tiers: Map<number, TalentNode[]>;
   sortedKeys: number[];
@@ -107,8 +103,6 @@ function computeAdjustedGates(
     };
   });
 }
-
-// --- Node polynomial builder ---
 
 interface NodePolyResult {
   skipPoly: Poly | null;
@@ -170,8 +164,6 @@ function buildNodePoly(
   return { skipPoly, selectPoly: selPoly };
 }
 
-// --- Bitmap accessibility ---
-
 function isAccessibleByBitmap(
   node: TalentNode,
   bitmap: number,
@@ -184,8 +176,6 @@ function isAccessibleByBitmap(
   }
   return false;
 }
-
-// --- Validation helpers ---
 
 export function computeReachable(
   tree: TalentTree,
@@ -236,7 +226,6 @@ function validateBudgetAndGates(
 ): void {
   if (alwaysNodes.size === 0 && neverNodes.size === 0) return;
 
-  // Check total available points after blocking
   let totalAvailable = 0;
   for (const node of tree.nodes.values()) {
     if (!neverNodes.has(node.id) && !node.freeNode) {
@@ -325,7 +314,6 @@ function validateBudgetAndGates(
     }
   }
 
-  // Gate-specific checks
   const adjustedGates = computeAdjustedGates(tree);
   for (let gi = 0; gi < tree.gates.length; gi++) {
     const gate = tree.gates[gi];
@@ -404,8 +392,6 @@ function validateBudgetAndGates(
   }
 }
 
-// --- Polynomial DP counting ---
-
 function countDP(
   tree: TalentTree,
   constraints: Map<number, Constraint>,
@@ -473,7 +459,6 @@ function countDP(
     list.push(ancestorId);
   }
 
-  // Initialize DP
   let dp = new Map<number, Poly>();
   const initPoly = new Array(budget + 1).fill(0);
   initPoly[0] = 1;
@@ -628,8 +613,6 @@ function countDP(
   return BigInt(total);
 }
 
-// --- Main entry point ---
-
 export function countTreeBuilds(
   tree: TalentTree,
   constraints: Map<number, Constraint>,
@@ -708,8 +691,6 @@ export function countTreeBuilds(
 
   return { count, durationMs: performance.now() - startTime, warnings };
 }
-
-// --- Build generation via suffix-DP unranking ---
 
 interface TreeLayout {
   orderedNodes: TalentNode[];
@@ -1038,13 +1019,11 @@ function unrankBuild(
       }
     }
 
-    // Forced skip.
     if (isNever || (!accessible && !isFree)) {
       bitmap = bitmap & ~retireMask;
       continue;
     }
 
-    // Try skip first (if optional).
     if (!isAlways) {
       const bmSkipNext = bitmap & ~retireMask;
       const skipCount = suffixLookup(suffix[i + 1], bmSkipNext, r);

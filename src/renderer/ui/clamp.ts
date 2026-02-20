@@ -8,7 +8,6 @@ export function clampToViewport(el: HTMLElement, margin = 8): void {
   const availW = vw - margin * 2;
   const availH = vh - margin * 2;
 
-  // Shrink if element exceeds viewport
   let rect = el.getBoundingClientRect();
   if (rect.width > availW) el.style.maxWidth = `${availW}px`;
   if (rect.height > availH) el.style.maxHeight = `${availH}px`;

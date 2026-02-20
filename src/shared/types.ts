@@ -1,5 +1,3 @@
-// --- Raidbots raw JSON types ---
-
 export interface RawTalentEntry {
   id: number;
   name: string;
@@ -50,8 +48,6 @@ export interface RawSpecData {
   heroNodes: RawTalentNode[];
   subTreeNodes: RawSubTreeNode[];
 }
-
-// --- Internal domain types ---
 
 export interface TalentEntry {
   id: number;
@@ -116,8 +112,6 @@ export interface Specialization {
   systemNodeIds: number[];
 }
 
-// --- Constraint types ---
-
 export type BooleanExpr =
   | { op: "AND"; children: BooleanExpr[] }
   | { op: "OR"; children: BooleanExpr[] }
@@ -133,8 +127,6 @@ export interface Constraint {
   condition?: BooleanExpr;
 }
 
-// --- Node visual state ---
-
 export type NodeState =
   | "locked"
   | "available"
@@ -143,8 +135,6 @@ export type NodeState =
   | "conditional"
   | "implied"
   | "free";
-
-// --- Solver types ---
 
 export interface SolverConfig {
   tree: TalentTree;
@@ -161,8 +151,6 @@ export interface Build {
   entries: Map<number, number>; // entryId → points
 }
 
-// --- Count result types ---
-
 export type CountWarningSeverity = "error" | "warning";
 
 export interface CountWarning {
@@ -177,16 +165,10 @@ export interface CountResult {
   warnings: CountWarning[];
 }
 
-// --- Worker messages ---
-
-export type WorkerRequest = { type: "generate"; config: SolverConfig };
-
 export type WorkerResponse =
   | { type: "generate"; result: SolverResult }
   | { type: "progress"; current: number; total: number }
   | { type: "error"; message: string };
-
-// --- IPC API ---
 
 export interface TalentDataResult {
   specs: Specialization[];
@@ -196,7 +178,7 @@ export interface TalentDataResult {
 
 export interface SpellTooltip {
   meta: string; // "25 Energy · Melee Range · Instant · 45 sec cooldown"
-  desc: string; // The ability description text
+  desc: string;
 }
 
 export interface Loadout {
@@ -216,15 +198,12 @@ export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
 }
 
-// --- State events ---
-
 export type AppEvent =
   | { type: "spec-selected"; spec: Specialization }
   | { type: "hero-tree-selected"; tree: TalentTree }
   | { type: "constraint-changed"; constraint: Constraint }
   | { type: "constraint-removed"; nodeId: number }
   | { type: "count-updated"; counts: TreeCounts }
-  | { type: "generation-complete"; result: SolverResult }
   | { type: "data-loaded"; data: TalentDataResult }
   | { type: "validation-changed" };
 

@@ -1,5 +1,6 @@
 appId: com.talentcombinator.app
 productName: Talent Combinator
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
 directories:
   buildResources: build
   output: dist
@@ -14,8 +15,9 @@ mac:
 win:
   target:
     - nsis
-    - portable
 linux:
   target:
     - AppImage
     - deb
+publish:
+  provider: github

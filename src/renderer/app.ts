@@ -39,8 +39,6 @@ const cachedDetails: Record<CountKey, CountResult> = {
 };
 const dirtyTrees = new Set<CountKey>();
 
-// --- Sidebar toggle ---
-
 function openSidebar(): void {
   sidebar.classList.add("open");
   sidebarBackdrop.classList.add("visible");
@@ -61,8 +59,6 @@ sidebarToggle.addEventListener("click", () => {
 
 sidebarBackdrop.addEventListener("click", closeSidebar);
 
-// --- Splash screen ---
-
 function showSplash(specs: Specialization[]): void {
   mainContent.innerHTML = "";
 
@@ -73,7 +69,6 @@ function showSplash(specs: Specialization[]): void {
   title.textContent = "Select a Specialization";
   splash.appendChild(title);
 
-  // Group specs by class
   const groups = new Map<string, Specialization[]>();
   for (const spec of specs) {
     let group = groups.get(spec.className);
@@ -115,8 +110,6 @@ function showSplash(specs: Specialization[]): void {
   mainContent.appendChild(splash);
 }
 
-// --- Tree rendering ---
-
 let activeTreeTab = "class";
 
 function renderTrees(
@@ -129,7 +122,6 @@ function renderTrees(
   sidebarToggle.classList.add("visible");
   closeSidebar();
 
-  // Instructions bar
   const instructions = document.createElement("div");
   instructions.className = "instructions-bar";
   instructions.innerHTML = [
@@ -139,7 +131,6 @@ function renderTrees(
   ].join(" &middot; ");
   mainContent.appendChild(instructions);
 
-  // Tab bar
   const tabs = document.createElement("div");
   tabs.className = "tree-tabs";
 
@@ -226,8 +217,6 @@ function renderTrees(
   scheduleCount();
 }
 
-// --- Counting ---
-
 function detectTreeKey(nodeId: number): CountKey | null {
   const spec = state.activeSpec;
   if (!spec) return null;
@@ -298,8 +287,6 @@ function runCount(): void {
   publishCounts();
 }
 
-// --- Implied predecessors ---
-
 function computeImpliedPredecessors(
   nodeId: number,
   tree: TalentTree,
@@ -351,17 +338,13 @@ function recomputeImpliedForTree(tree: TalentTree): void {
   }
 }
 
-// --- Validation ---
-
 function formatTriggerMessage(nodeName: string, errorMessage: string): string {
-  // Budget exceeded: "... need X points — exceeds the Y-point budget by Z"
   const budgetMatch = errorMessage.match(
     /need (\d+) points.*?(\d+)-point budget/,
   );
   if (budgetMatch) {
     return `"${nodeName}" exceeds the ${budgetMatch[2]}-point budget (required talents need ${budgetMatch[1]} points)`;
   }
-  // Blocked too many: "X points selectable, Y needed"
   const blockedMatch = errorMessage.match(
     /(\d+) points selectable, (\d+) needed/,
   );
@@ -427,8 +410,6 @@ function revalidateAllTrees(): void {
   state.clearValidationError();
 }
 
-// --- Auto-select hero nodes ---
-
 function isRealChoice(node: TalentNode): boolean {
   return node.type === "choice" && !node.isApex;
 }
@@ -448,8 +429,6 @@ function autoSelectHeroNodes(tree: TalentTree): void {
   }
   scheduleCount("heroCount");
 }
-
-// --- Event handling ---
 
 state.subscribe((event) => {
   switch (event.type) {
@@ -498,8 +477,6 @@ state.subscribe((event) => {
     }
   }
 });
-
-// --- Import talent hash ---
 
 function showImportHashDialog(): Promise<{
   hashStr: string;
@@ -686,8 +663,6 @@ async function importTalentHash(): Promise<void> {
   }
 }
 
-// --- Save/Load ---
-
 async function saveLoadout(): Promise<void> {
   const spec = state.activeSpec;
   if (!spec) return;
@@ -727,7 +702,6 @@ async function loadLoadout(): Promise<void> {
   }
 }
 
-// Header save/load/import buttons
 const headerActions = document.createElement("div");
 headerActions.className = "header-actions";
 

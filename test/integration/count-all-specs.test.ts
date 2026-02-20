@@ -1,14 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { countTreeBuilds } from "../../src/shared/build-counter";
 import { parseSpecializations } from "../../src/main/data/parser";
 import type { RawSpecData } from "../../src/shared/types";
 
-const rawData: RawSpecData[] = JSON.parse(
-  readFileSync("/tmp/claude/talents.json", "utf-8"),
-);
+const DATA_PATH =
+  process.env.TALENT_DATA_PATH || "./test/fixtures/talents.json";
+const HAS_DATA = existsSync(DATA_PATH);
 
-describe("all specs counting", () => {
+describe.skipIf(!HAS_DATA)("all specs counting", () => {
+  const rawData: RawSpecData[] = HAS_DATA
+    ? JSON.parse(readFileSync(DATA_PATH, "utf-8"))
+    : [];
   const specs = parseSpecializations(rawData);
 
   for (const spec of specs) {
