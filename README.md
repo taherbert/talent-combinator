@@ -2,6 +2,9 @@
 
 Generate all valid WoW talent builds matching your constraints, exported as SimulationCraft profilesets.
 
+
+<img width="2036" height="2250" alt="CleanShot 2026-02-19 at 18 02 28" src="https://github.com/user-attachments/assets/4182ede7-053c-4e0a-9e4e-bc090d7801b7" />
+
 ## What it does
 
 Talent Combinator explores the full space of valid talent configurations for any World of Warcraft specialization. Set constraints on individual talents (always, never, or conditional), and the app enumerates every legal build that satisfies them. Results export directly as SimC profilesets for batch simming on [Raidbots](https://www.raidbots.com/).
