@@ -1,10 +1,5 @@
 import { state } from "../state";
-import type {
-  Build,
-  Specialization,
-  TalentNode,
-  TalentTree,
-} from "../../shared/types";
+import type { Build, Specialization, TalentTree } from "../../shared/types";
 import { MAX_PROFILESETS } from "../../shared/constants";
 import { generateTreeBuilds } from "../../shared/build-counter";
 import {
@@ -26,7 +21,6 @@ type ExportFormat = "simc" | "hash";
 
 export class ExportPanel {
   private generateBtn: HTMLButtonElement;
-  private hintEl: HTMLElement;
   private dialogContainer: HTMLElement;
   private format: ExportFormat = "simc";
   private simcBtn!: HTMLButtonElement;
@@ -37,7 +31,6 @@ export class ExportPanel {
     const actionsEl = document.createElement("div");
     actionsEl.className = "export-actions";
 
-    // Format toggle
     const toggle = document.createElement("div");
     toggle.className = "format-toggle";
 
@@ -61,10 +54,6 @@ export class ExportPanel {
     this.generateBtn.addEventListener("click", () => this.generate());
     actionsEl.appendChild(this.generateBtn);
 
-    this.hintEl = document.createElement("span");
-    this.hintEl.className = "export-hint";
-    actionsEl.appendChild(this.hintEl);
-
     counterBar.appendChild(actionsEl);
     this.dialogContainer = document.getElementById("dialog-container")!;
 
@@ -86,26 +75,7 @@ export class ExportPanel {
   private updateButtonState(): void {
     const total = this.lastTotal;
     const MAX_BIG = BigInt(MAX_PROFILESETS);
-    if (this.format === "simc") {
-      this.generateBtn.disabled = total <= 0n || total > MAX_BIG;
-      this.hintEl.textContent = "";
-    } else {
-      const specId = state.activeSpec?.specId;
-      const hasHash = specId != null && state.getTreeHash(specId) != null;
-      if (total <= 0n) {
-        this.generateBtn.disabled = true;
-        this.hintEl.textContent = "";
-      } else if (!hasHash) {
-        this.generateBtn.disabled = true;
-        this.hintEl.textContent = "Import a talent hash to enable";
-      } else if (total > MAX_BIG) {
-        this.generateBtn.disabled = true;
-        this.hintEl.textContent = "";
-      } else {
-        this.generateBtn.disabled = false;
-        this.hintEl.textContent = "";
-      }
-    }
+    this.generateBtn.disabled = total <= 0n || total > MAX_BIG;
   }
 
   private async generate(): Promise<void> {
@@ -190,21 +160,17 @@ export class ExportPanel {
 
     const specId = spec.specId;
     if (specId == null) return "";
-    const treeHashBytes = state.getTreeHash(specId);
-    if (!treeHashBytes) return "";
+    const treeHashBytes = state.getTreeHash(specId) ?? new Array(16).fill(0);
 
-    // Build entry lookups for each tree
     const entryLookups = trees.map((tree) =>
       buildEntryLookup(tree.nodes.values()),
     );
 
-    // Assemble full node list for encoding
     const sameClassSpecs = state.specs.filter(
       (s) => s.className === spec.className,
     );
     const { allNodes, allNodeMap } = buildAllNodesForSpec(sameClassSpecs);
 
-    // Detect subTreeNode + entryIndex for the active hero tree
     const heroTree = state.activeHeroTree;
     let subTreeNodeId: number | undefined;
     let subTreeEntryIndex: number | undefined;
@@ -366,13 +332,16 @@ export class ExportPanel {
     saveBtn.textContent = "Save to File";
     saveBtn.addEventListener("click", async () => {
       const spec = state.activeSpec;
-      const defaultName = spec
-        ? isHash
-          ? `${spec.className}_${spec.specName}_hashes.txt`
-          : `${spec.className}_${spec.specName}_profiles.simc`
-        : isHash
-          ? "hashes.txt"
-          : "profiles.simc";
+      let defaultName: string;
+      if (spec && isHash) {
+        defaultName = `${spec.className}_${spec.specName}_hashes.txt`;
+      } else if (spec) {
+        defaultName = `${spec.className}_${spec.specName}_profiles.simc`;
+      } else if (isHash) {
+        defaultName = "hashes.txt";
+      } else {
+        defaultName = "profiles.simc";
+      }
       await electronAPI.saveFile(output, defaultName);
     });
     actions.appendChild(saveBtn);
