@@ -754,3 +754,14 @@ async function init(): Promise<void> {
 }
 
 init();
+
+electronAPI.onUpdateDownloaded((version) => {
+  const banner = document.createElement("div");
+  banner.className = "update-banner";
+  banner.textContent = `v${version} available`;
+  const btn = document.createElement("button");
+  btn.textContent = "Restart to update";
+  btn.addEventListener("click", () => electronAPI.installUpdate());
+  banner.appendChild(btn);
+  document.getElementById("app")!.prepend(banner);
+});

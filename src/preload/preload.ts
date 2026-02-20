@@ -10,6 +10,9 @@ const api: ElectronAPI = {
   saveLoadout: (data) => ipcRenderer.invoke("save-loadout", data),
   loadLoadout: () => ipcRenderer.invoke("load-loadout"),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
+  onUpdateDownloaded: (cb) =>
+    ipcRenderer.once("update-downloaded", (_e, v) => cb(v)),
+  installUpdate: () => ipcRenderer.send("install-update"),
 };
 
 contextBridge.exposeInMainWorld("electronAPI", api);
