@@ -59,18 +59,21 @@ function parseNodes(rawNodes: RawTalentNode[]): Map<number, TalentNode> {
   for (const raw of rawNodes) {
     if (!isValidNode(raw)) continue;
 
+    // WoW node types: "single" (one ability, possibly multi-rank), "choice" (pick one of N),
+    // "tiered" (sequential rank-up across entries). "single" nodes with extra entries
+    // only allow the first; "tiered" behaves like "single" for counting purposes.
+    const nodeType =
+      raw.type === "choice" && raw.entries.length > 1 ? "choice" : "single";
+    const entries =
+      nodeType === "single" ? raw.entries.slice(0, 1) : raw.entries;
+
     nodes.set(raw.id, {
       id: raw.id,
       name: nodeName(raw),
       icon: raw.icon || raw.entries[0]?.icon || "",
-      type:
-        raw.type === "tiered"
-          ? "single"
-          : raw.entries.length > 1
-            ? "choice"
-            : "single",
+      type: nodeType,
       maxRanks: raw.maxRanks,
-      entries: raw.entries.map(parseEntry),
+      entries: entries.map(parseEntry),
       next: raw.next ?? [],
       prev: raw.prev ?? [],
       reqPoints: raw.reqPoints ?? 0,

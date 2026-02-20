@@ -1,6 +1,6 @@
 {
   "name": "talent-combinator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate WoW SimulationCraft talent profilesets from talent tree constraints",
   "author": "Tom Herbert <18316812+taherbert@users.noreply.github.com>",
   "license": "MIT",
@@ -14,7 +14,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "test": "vitest run --exclude test/integration",
+    "test": "vitest run --exclude test/integration --exclude test/cross-validate",
     "test:integration": "vitest run test/integration",
     "test:all": "vitest run",
     "test:watch": "vitest",

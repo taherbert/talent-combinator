@@ -65,14 +65,20 @@ function buildTiers(tree: TalentTree): {
   tiers: Map<number, TalentNode[]>;
   sortedKeys: number[];
 } {
+  // Group by reqPoints (gate tier), then sort by row within each group.
+  // This ensures nodes from lower gate tiers are processed before higher
+  // gate thresholds are enforced, even when they share a visual row.
   const tiers = new Map<number, TalentNode[]>();
   for (const node of tree.nodes.values()) {
-    let tier = tiers.get(node.row);
+    let tier = tiers.get(node.reqPoints);
     if (!tier) {
       tier = [];
-      tiers.set(node.row, tier);
+      tiers.set(node.reqPoints, tier);
     }
     tier.push(node);
+  }
+  for (const tier of tiers.values()) {
+    tier.sort((a, b) => a.row - b.row);
   }
   const sortedKeys = Array.from(tiers.keys()).sort((a, b) => a - b);
   return { tiers, sortedKeys };
@@ -86,20 +92,21 @@ function freeNodeCost(node: TalentNode): number {
   return node.maxRanks;
 }
 
-// Gate thresholds adjusted for free node investments that don't consume budget
+// Gate thresholds adjusted for free node investments that don't consume budget.
+// Returns {requiredPoints: raw gate key, adjustedPoints: budget threshold}.
 function computeAdjustedGates(
   tree: TalentTree,
-): { row: number; requiredPoints: number }[] {
+): { requiredPoints: number; adjustedPoints: number }[] {
   return tree.gates.map((gate) => {
     let freeInvested = 0;
     for (const node of tree.nodes.values()) {
-      if (node.row < gate.row && node.freeNode) {
+      if (node.reqPoints < gate.requiredPoints && node.freeNode) {
         freeInvested += freeNodeCost(node);
       }
     }
     return {
-      row: gate.row,
-      requiredPoints: Math.max(0, gate.requiredPoints - freeInvested),
+      requiredPoints: gate.requiredPoints,
+      adjustedPoints: Math.max(0, gate.requiredPoints - freeInvested),
     };
   });
 }
@@ -318,7 +325,7 @@ function validateBudgetAndGates(
   for (let gi = 0; gi < tree.gates.length; gi++) {
     const gate = tree.gates[gi];
     if (gate.requiredPoints === 0) continue;
-    const adjustedGateReq = adjustedGates[gi].requiredPoints;
+    const adjustedGateReq = adjustedGates[gi].adjustedPoints;
 
     // Forced points before/after gate
     let forcedBefore = 0;
@@ -326,7 +333,7 @@ function validateBudgetAndGates(
     const forcedAfterIds: number[] = [];
     for (const nodeId of forcedNodes) {
       const node = tree.nodes.get(nodeId)!;
-      if (node.row < gate.row) {
+      if (node.reqPoints < gate.requiredPoints) {
         forcedBefore += mandatoryRanks(nodeId);
       } else {
         forcedAfter += mandatoryRanks(nodeId);
@@ -340,7 +347,7 @@ function validateBudgetAndGates(
       const availableAfter = tree.pointBudget - minBefore;
       warnings.push({
         severity: "error",
-        message: `Required talents after row ${gate.row} need ${forcedAfter} points, but only ${availableAfter} remain after the gate (${tree.pointBudget} budget − ${minBefore} before gate)`,
+        message: `Required talents after ${gate.requiredPoints}-point gate need ${forcedAfter} points, but only ${availableAfter} remain (${tree.pointBudget} budget − ${minBefore} before gate)`,
         nodeIds: forcedAfterIds,
       });
     }
@@ -349,7 +356,7 @@ function validateBudgetAndGates(
     let availableBefore = 0;
     const neverBeforeGate: number[] = [];
     for (const node of tree.nodes.values()) {
-      if (node.row < gate.row) {
+      if (node.reqPoints < gate.requiredPoints) {
         if (neverNodes.has(node.id)) {
           neverBeforeGate.push(node.id);
         } else {
@@ -361,7 +368,7 @@ function validateBudgetAndGates(
       const gap = gate.requiredPoints - availableBefore;
       warnings.push({
         severity: "error",
-        message: `Need ${gate.requiredPoints} points before row ${gate.row} gate, but only ${availableBefore} selectable — unblock at least ${gap} more points`,
+        message: `Need ${gate.requiredPoints} points before gate, but only ${availableBefore} selectable — unblock at least ${gap} more points`,
         nodeIds: neverBeforeGate,
       });
     }
@@ -371,7 +378,7 @@ function validateBudgetAndGates(
       let availableAfterGate = 0;
       const neverAfterGate: number[] = [];
       for (const node of tree.nodes.values()) {
-        if (node.row >= gate.row && !node.freeNode) {
+        if (node.reqPoints >= gate.requiredPoints && !node.freeNode) {
           if (neverNodes.has(node.id)) {
             neverAfterGate.push(node.id);
           } else {
@@ -384,7 +391,7 @@ function validateBudgetAndGates(
         const gap = pointsNeededAfter - availableAfterGate;
         warnings.push({
           severity: "error",
-          message: `Only ${availableAfterGate} points selectable after row ${gate.row} gate, need ${pointsNeededAfter} — unblock at least ${gap} more points after the gate`,
+          message: `Only ${availableAfterGate} points selectable after ${gate.requiredPoints}-point gate, need ${pointsNeededAfter} — unblock at least ${gap} more points`,
           nodeIds: neverAfterGate,
         });
       }
@@ -466,13 +473,13 @@ function countDP(
 
   // The DP polynomial only tracks budget-spending points, but gates count
   // total invested including free/entry nodes. Use pre-adjusted thresholds.
-  const gateAtRow = new Map<number, number>();
+  const gateAtReqPoints = new Map<number, number>();
   for (const gate of computeAdjustedGates(tree)) {
-    gateAtRow.set(gate.row, gate.requiredPoints);
+    gateAtReqPoints.set(gate.requiredPoints, gate.adjustedPoints);
   }
 
   const polyCache = new Map<string, NodePolyResult>();
-  let currentTierRow = sortedKeys[0];
+  let currentTierReq = sortedKeys[0];
 
   for (let i = 0; i < orderedNodes.length; i++) {
     const node = orderedNodes[i];
@@ -486,18 +493,17 @@ function countDP(
       }
     }
 
-    if (node.row !== currentTierRow) {
-      const gateReq = gateAtRow.get(node.row);
+    if (node.reqPoints !== currentTierReq) {
+      const gateReq = gateAtReqPoints.get(node.reqPoints);
       if (gateReq != null) {
         dp = enforceGate(dp, gateReq, budget);
       }
-      currentTierRow = node.row;
+      currentTierReq = node.reqPoints;
     }
 
     const isNever = neverNodes.has(node.id);
-    // Entry and free nodes are pre-selected in WoW — force them to always be taken
-    const isAlways =
-      alwaysNodes.has(node.id) || node.entryNode || node.freeNode;
+    // Free nodes are pre-selected in WoW — force them to always be taken
+    const isAlways = alwaysNodes.has(node.id) || node.freeNode;
     const constraint = constraints.get(node.id);
     const isTracked = ancestorBitIndex.has(node.id);
 
@@ -698,8 +704,8 @@ interface TreeLayout {
   retireAtIndex: Map<number, number[]>;
   /** Stable bit position for each ancestor node — identical schedule to countDP. */
   permanentBitAssignment: Map<number, number>;
-  gateAtRow: Map<number, number>;
-  /** First orderedNodes index of each tier row, for gate enforcement. */
+  gateAtReqPoints: Map<number, number>;
+  /** First orderedNodes index of each reqPoints tier, for gate enforcement. */
   tierFirstIndex: Map<number, number>;
   budget: number;
 }
@@ -769,16 +775,16 @@ function computeLayout(tree: TalentTree): TreeLayout {
     }
   }
 
-  const gateAtRow = new Map<number, number>();
+  const gateAtReqPoints = new Map<number, number>();
   for (const gate of computeAdjustedGates(tree))
-    gateAtRow.set(gate.row, gate.requiredPoints);
+    gateAtReqPoints.set(gate.requiredPoints, gate.adjustedPoints);
 
   const tierFirstIndex = new Map<number, number>();
-  let currentRow = -1;
+  let currentReq = -1;
   for (let i = 0; i < orderedNodes.length; i++) {
-    if (orderedNodes[i].row !== currentRow) {
-      currentRow = orderedNodes[i].row;
-      tierFirstIndex.set(currentRow, i);
+    if (orderedNodes[i].reqPoints !== currentReq) {
+      currentReq = orderedNodes[i].reqPoints;
+      tierFirstIndex.set(currentReq, i);
     }
   }
 
@@ -787,7 +793,7 @@ function computeLayout(tree: TalentTree): TreeLayout {
     assignAtIndex,
     retireAtIndex,
     permanentBitAssignment,
-    gateAtRow,
+    gateAtReqPoints,
     tierFirstIndex,
     budget,
   };
@@ -813,7 +819,7 @@ function buildSuffixTables(
     orderedNodes,
     retireAtIndex,
     permanentBitAssignment,
-    gateAtRow,
+    gateAtReqPoints,
     tierFirstIndex,
     budget,
   } = layout;
@@ -830,10 +836,11 @@ function buildSuffixTables(
     suffix[i] = new Map<number, number[]>();
 
     const gateReq =
-      tierFirstIndex.get(node.row) === i ? (gateAtRow.get(node.row) ?? 0) : 0;
+      tierFirstIndex.get(node.reqPoints) === i
+        ? (gateAtReqPoints.get(node.reqPoints) ?? 0)
+        : 0;
     const isNever = neverNodes.has(node.id);
-    const isAlways =
-      alwaysNodes.has(node.id) || node.entryNode || node.freeNode;
+    const isAlways = alwaysNodes.has(node.id) || node.freeNode;
     const constraint = constraints.get(node.id);
     const isFree = node.freeNode;
     const isTracked = permanentBitAssignment.has(node.id);
@@ -999,8 +1006,7 @@ function unrankBuild(
   for (let i = 0; i < orderedNodes.length; i++) {
     const node = orderedNodes[i];
     const isNever = neverNodes.has(node.id);
-    const isAlways =
-      alwaysNodes.has(node.id) || node.entryNode || node.freeNode;
+    const isAlways = alwaysNodes.has(node.id) || node.freeNode;
     const constraint = constraints.get(node.id);
     const isFree = node.freeNode;
     const isTracked = permanentBitAssignment.has(node.id);
