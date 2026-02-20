@@ -196,6 +196,8 @@ export interface ElectronAPI {
   saveLoadout: (data: Loadout) => Promise<boolean>;
   loadLoadout: () => Promise<Loadout | null>;
   getAppVersion: () => Promise<string>;
+  onUpdateDownloaded: (cb: (version: string) => void) => void;
+  installUpdate: () => void;
 }
 
 export type AppEvent =

@@ -1055,6 +1055,28 @@
   cursor: not-allowed;
 }
 
+/* Update banner */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: var(--color-blue-dim);
+  color: var(--color-blue);
+  font-size: 13px;
+}
+
+.update-banner button {
+  background: var(--color-blue);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;

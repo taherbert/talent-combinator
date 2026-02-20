@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import { join } from "path";
 import { registerIPC } from "./ipc";
+import { initAutoUpdater } from "./auto-updater";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -34,6 +35,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   registerIPC();
   createWindow();
+  initAutoUpdater();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
