@@ -3,7 +3,10 @@
 Generate all valid WoW talent builds matching your constraints, exported as SimulationCraft profilesets.
 
 
-<img width="2036" height="2250" alt="CleanShot 2026-02-19 at 18 02 28" src="https://github.com/user-attachments/assets/4182ede7-053c-4e0a-9e4e-bc090d7801b7" />
+<img width="1018" height="1125" alt="CleanShot 2026-02-19 at 18 02 28" src="https://github.com/user-attachments/assets/4182ede7-053c-4e0a-9e4e-bc090d7801b7" />
+
+<img width="468" height="473" alt="CleanShot 2026-02-19 at 18 05 09" src="https://github.com/user-attachments/assets/3e3581dc-88ea-47af-85fe-1e7d5929ffa7" />
+
 
 ## What it does
 
