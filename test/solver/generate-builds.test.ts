@@ -401,4 +401,72 @@ describe("conditional constraint generation", () => {
       }
     }
   });
+
+  it("entry-conditional: count matches generation", () => {
+    // X(1), Y(2), C(3, choice: 300, 301) — budget 2.
+    // Entry 300 only available when X taken.
+    const x = makeNode(1);
+    const y = makeNode(2);
+    const c = makeNode(3, {
+      type: "choice",
+      entries: [makeEntry(300), makeEntry(301)],
+    });
+    const tree = makeTree([x, y, c], { pointBudget: 2 });
+    const sel1: BooleanExpr = { op: "TALENT_SELECTED", nodeId: 1 };
+    const constraints = new Map<number, Constraint>([
+      [
+        3,
+        {
+          nodeId: 3,
+          type: "entry-conditional",
+          entryConditions: [{ entryIndex: 0, condition: sel1 }],
+        },
+      ],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+    // Entry 300 should only appear when X (entry 100) is taken
+    for (const build of builds) {
+      const entry300Present = (build.entries.get(300) ?? 0) > 0;
+      if (entry300Present) {
+        expect(build.entries.get(100) ?? 0).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("entry-conditional with negation: count matches generation", () => {
+    const x = makeNode(1);
+    const y = makeNode(2);
+    const c = makeNode(3, {
+      type: "choice",
+      entries: [makeEntry(300), makeEntry(301)],
+    });
+    const tree = makeTree([x, y, c], { pointBudget: 2 });
+    const notX: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 1,
+      negated: true,
+    };
+    const constraints = new Map<number, Constraint>([
+      [
+        3,
+        {
+          nodeId: 3,
+          type: "entry-conditional",
+          entryConditions: [{ entryIndex: 0, condition: notX }],
+        },
+      ],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+    // Entry 300 should only appear when X is NOT taken
+    for (const build of builds) {
+      const entry300Present = (build.entries.get(300) ?? 0) > 0;
+      if (entry300Present) {
+        expect(build.entries.get(100) ?? 0).toBe(0);
+      }
+    }
+  });
 });

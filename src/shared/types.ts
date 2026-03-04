@@ -123,7 +123,16 @@ export type BooleanExpr =
       entryId?: number;
     };
 
-export type ConstraintType = "always" | "never" | "conditional";
+export type ConstraintType =
+  | "always"
+  | "never"
+  | "conditional"
+  | "entry-conditional";
+
+export interface EntryCondition {
+  entryIndex: number;
+  condition: BooleanExpr;
+}
 
 export interface Constraint {
   nodeId: number;
@@ -131,6 +140,7 @@ export interface Constraint {
   entryIndex?: number; // For choice nodes: which entry (0 or 1)
   exactRank?: number; // For multi-rank: specific rank desired
   condition?: BooleanExpr;
+  entryConditions?: EntryCondition[]; // For "entry-conditional": per-entry conditions
 }
 
 export type NodeState =

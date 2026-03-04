@@ -16,18 +16,34 @@ export class ConditionEditor {
   private panel: HTMLElement | null = null;
   private currentNode: TalentNode | null = null;
   private currentTree: TalentTree | null = null;
+  private entryIndex: number | null = null;
   private groups: RuleGroup[] = [];
   private mode: "any" | "all" = "any";
   private targetGroupIndex: number | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-  open(node: TalentNode, tree: TalentTree): void {
+  open(node: TalentNode, tree: TalentTree, entryIndex?: number): void {
     this.close();
     this.currentNode = node;
     this.currentTree = tree;
+    this.entryIndex = entryIndex ?? null;
 
     const existing = state.constraints.get(node.id);
-    if (existing?.type === "conditional" && existing.condition) {
+    if (
+      this.entryIndex != null &&
+      existing?.type === "entry-conditional" &&
+      existing.entryConditions
+    ) {
+      const ec = existing.entryConditions.find(
+        (e) => e.entryIndex === this.entryIndex,
+      );
+      if (ec) {
+        this.loadCondition(ec.condition);
+      } else {
+        this.groups = [];
+        this.mode = "any";
+      }
+    } else if (existing?.type === "conditional" && existing.condition) {
       this.loadCondition(existing.condition);
     } else {
       this.groups = [];
@@ -190,7 +206,12 @@ export class ConditionEditor {
 
     const title = document.createElement("span");
     title.className = "cond-title";
-    title.textContent = this.currentNode!.name;
+    if (this.entryIndex != null) {
+      const entry = this.currentNode!.entries[this.entryIndex];
+      title.textContent = `Conditional: ${entry?.name || this.currentNode!.name}`;
+    } else {
+      title.textContent = this.currentNode!.name;
+    }
     header.appendChild(title);
 
     const closeBtn = document.createElement("button");
@@ -553,7 +574,28 @@ export class ConditionEditor {
     clearBtn.className = "btn btn-secondary cond-btn";
     clearBtn.textContent = "Clear";
     clearBtn.addEventListener("click", () => {
-      state.removeConstraint(this.currentNode!.id);
+      if (this.entryIndex != null) {
+        const existing = state.constraints.get(this.currentNode!.id);
+        if (
+          existing?.type === "entry-conditional" &&
+          existing.entryConditions
+        ) {
+          const remaining = existing.entryConditions.filter(
+            (ec) => ec.entryIndex !== this.entryIndex,
+          );
+          if (remaining.length > 0) {
+            state.setConstraint({
+              nodeId: this.currentNode!.id,
+              type: "entry-conditional",
+              entryConditions: remaining,
+            });
+          } else {
+            state.removeConstraint(this.currentNode!.id);
+          }
+        }
+      } else {
+        state.removeConstraint(this.currentNode!.id);
+      }
       this.close();
     });
     footer.appendChild(clearBtn);
@@ -613,10 +655,27 @@ export class ConditionEditor {
       condition = { op: outerOp, children: nonEmpty.map(groupToExpr) };
     }
 
-    state.setConstraint({
-      nodeId: this.currentNode.id,
-      type: "conditional",
-      condition,
-    });
+    if (this.entryIndex != null) {
+      // Per-entry conditional: merge with existing entryConditions
+      const existing = state.constraints.get(this.currentNode.id);
+      const others =
+        existing?.type === "entry-conditional" && existing.entryConditions
+          ? existing.entryConditions.filter(
+              (ec) => ec.entryIndex !== this.entryIndex,
+            )
+          : [];
+      others.push({ entryIndex: this.entryIndex, condition });
+      state.setConstraint({
+        nodeId: this.currentNode.id,
+        type: "entry-conditional",
+        entryConditions: others,
+      });
+    } else {
+      state.setConstraint({
+        nodeId: this.currentNode.id,
+        type: "conditional",
+        condition,
+      });
+    }
   }
 }

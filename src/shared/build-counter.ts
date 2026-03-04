@@ -386,6 +386,7 @@ function validateBudgetAndGates(
 interface ConditionalConstraintInfo {
   targetId: number;
   condition: BooleanExpr;
+  entryId?: number; // for per-entry enforcement
 }
 
 interface ExprRefs {
@@ -430,7 +431,7 @@ function evalBitmapExpr(
       let taken: boolean;
       if (expr.entryId != null) {
         const bit = condEntryBit.get(expr.entryId);
-        if (bit == null) return false;
+        if (bit == null) return !!expr.negated;
         taken = (bitmap & (1 << bit)) !== 0;
       } else {
         const bit = condBit.get(expr.nodeId);
@@ -463,20 +464,39 @@ function isValidBitmapForConstraints(
   condEntryBit: Map<number, number>,
   condNodeEntryBits: Map<number, number[]>,
 ): boolean {
-  for (const { targetId, condition } of enforcements) {
-    const bit = condBit.get(targetId);
-    if (bit == null) continue;
-    if (
-      evalBitmapExpr(
-        condition,
-        bitmap,
-        condBit,
-        condEntryBit,
-        condNodeEntryBits,
-      ) &&
-      !(bitmap & (1 << bit))
-    ) {
-      return false;
+  for (const { targetId, condition, entryId } of enforcements) {
+    if (entryId != null) {
+      // Per-entry: entry chosen but condition not met → invalid
+      const entryBitPos = condEntryBit.get(entryId);
+      if (entryBitPos == null) continue;
+      if (
+        bitmap & (1 << entryBitPos) &&
+        !evalBitmapExpr(
+          condition,
+          bitmap,
+          condBit,
+          condEntryBit,
+          condNodeEntryBits,
+        )
+      ) {
+        return false;
+      }
+    } else {
+      // Node-level: condition met but node not taken → invalid
+      const bit = condBit.get(targetId);
+      if (bit == null) continue;
+      if (
+        evalBitmapExpr(
+          condition,
+          bitmap,
+          condBit,
+          condEntryBit,
+          condNodeEntryBits,
+        ) &&
+        !(bitmap & (1 << bit))
+      ) {
+        return false;
+      }
     }
   }
   return true;
@@ -518,50 +538,113 @@ function buildConditionalSetup(
   let hasUnresolvable = false;
 
   for (const [nodeId, c] of constraints) {
-    if (c.type !== "conditional" || !c.condition) continue;
     if (!tree.nodes.has(nodeId)) continue;
 
-    const refs = collectExprRefs(c.condition);
-    const inTreeTriggers = new Set<number>();
-    for (const tid of refs.nodeIds) {
-      if (inTreeIds.has(tid)) inTreeTriggers.add(tid);
-    }
+    if (c.type === "conditional" && c.condition) {
+      const refs = collectExprRefs(c.condition);
+      const inTreeTriggers = new Set<number>();
+      for (const tid of refs.nodeIds) {
+        if (inTreeIds.has(tid)) inTreeTriggers.add(tid);
+      }
 
-    // Collect per-entry nodes that are in this tree
-    for (const nid of refs.perEntryNodeIds) {
-      if (inTreeIds.has(nid)) {
-        perEntryNodeIds.add(nid);
-        const node = tree.nodes.get(nid)!;
-        if (!nodeEntryIds.has(nid)) {
-          nodeEntryIds.set(
-            nid,
-            node.entries.map((e) => e.id),
-          );
+      // Collect per-entry nodes that are in this tree
+      for (const nid of refs.perEntryNodeIds) {
+        if (inTreeIds.has(nid)) {
+          perEntryNodeIds.add(nid);
+          const node = tree.nodes.get(nid)!;
+          if (!nodeEntryIds.has(nid)) {
+            nodeEntryIds.set(
+              nid,
+              node.entries.map((e) => e.id),
+            );
+          }
         }
       }
-    }
 
-    if (inTreeTriggers.size === 0) {
-      hasUnresolvable = true;
-      continue;
-    }
+      if (inTreeTriggers.size === 0) {
+        hasUnresolvable = true;
+        continue;
+      }
 
-    let enforceIdx = nodeIndex.get(nodeId)!;
-    for (const tid of inTreeTriggers) {
-      const idx = nodeIndex.get(tid);
-      if (idx != null && idx > enforceIdx) enforceIdx = idx;
-    }
+      let enforceIdx = nodeIndex.get(nodeId)!;
+      for (const tid of inTreeTriggers) {
+        const idx = nodeIndex.get(tid);
+        if (idx != null && idx > enforceIdx) enforceIdx = idx;
+      }
 
-    pushToMapList(enforceAtIndex, enforceIdx, {
-      targetId: nodeId,
-      condition: c.condition,
-    });
+      pushToMapList(enforceAtIndex, enforceIdx, {
+        targetId: nodeId,
+        condition: c.condition,
+      });
 
-    const condNodes = new Set([nodeId, ...inTreeTriggers]);
-    for (const nid of condNodes) {
-      allCondNodes.add(nid);
-      const current = condRetireNodeIndex.get(nid) ?? -1;
-      if (enforceIdx > current) condRetireNodeIndex.set(nid, enforceIdx);
+      const condNodes = new Set([nodeId, ...inTreeTriggers]);
+      for (const nid of condNodes) {
+        allCondNodes.add(nid);
+        const current = condRetireNodeIndex.get(nid) ?? -1;
+        if (enforceIdx > current) condRetireNodeIndex.set(nid, enforceIdx);
+      }
+    } else if (c.type === "entry-conditional" && c.entryConditions) {
+      const node = tree.nodes.get(nodeId)!;
+
+      // Target node needs per-entry bits to track which entry was chosen
+      perEntryNodeIds.add(nodeId);
+      if (!nodeEntryIds.has(nodeId)) {
+        nodeEntryIds.set(
+          nodeId,
+          node.entries.map((e) => e.id),
+        );
+      }
+
+      for (const { entryIndex, condition } of c.entryConditions) {
+        const refs = collectExprRefs(condition);
+        const inTreeTriggers = new Set<number>();
+        for (const tid of refs.nodeIds) {
+          if (inTreeIds.has(tid)) inTreeTriggers.add(tid);
+        }
+
+        for (const nid of refs.perEntryNodeIds) {
+          if (inTreeIds.has(nid)) {
+            perEntryNodeIds.add(nid);
+            const trigNode = tree.nodes.get(nid)!;
+            if (!nodeEntryIds.has(nid)) {
+              nodeEntryIds.set(
+                nid,
+                trigNode.entries.map((e) => e.id),
+              );
+            }
+          }
+        }
+
+        if (inTreeTriggers.size === 0) {
+          hasUnresolvable = true;
+          continue;
+        }
+
+        let enforceIdx = nodeIndex.get(nodeId)!;
+        for (const tid of inTreeTriggers) {
+          const idx = nodeIndex.get(tid);
+          if (idx != null && idx > enforceIdx) enforceIdx = idx;
+        }
+
+        const entryId = node.entries[entryIndex]?.id;
+        if (entryId != null) {
+          pushToMapList(enforceAtIndex, enforceIdx, {
+            targetId: nodeId,
+            condition,
+            entryId,
+          });
+        }
+
+        // Track all involved nodes for bit assignment/retirement
+        allCondNodes.add(nodeId);
+        for (const tid of inTreeTriggers) {
+          allCondNodes.add(tid);
+          const current = condRetireNodeIndex.get(tid) ?? -1;
+          if (enforceIdx > current) condRetireNodeIndex.set(tid, enforceIdx);
+        }
+        const current = condRetireNodeIndex.get(nodeId) ?? -1;
+        if (enforceIdx > current) condRetireNodeIndex.set(nodeId, enforceIdx);
+      }
     }
   }
 
@@ -848,20 +931,42 @@ function countDP(
     // Enforce conditional constraints at this index
     const toEnforce = condSetup.enforceAtIndex.get(i);
     if (toEnforce) {
-      for (const { targetId, condition } of toEnforce) {
-        const targetBit = 1 << condSelectBitIndex.get(targetId)!;
-        for (const [bitmap] of [...newDp]) {
-          if (
-            evalBitmapExpr(
-              condition,
-              bitmap,
-              condSelectBitIndex,
-              condEntryBitIndex,
-              condNodeEntryBits,
-            ) &&
-            !(bitmap & targetBit)
-          ) {
-            newDp.delete(bitmap);
+      for (const { targetId, condition, entryId } of toEnforce) {
+        if (entryId != null) {
+          // Per-entry: prune bitmaps where entry was chosen but condition not met
+          const entryBit = condEntryBitIndex.get(entryId);
+          if (entryBit == null) continue;
+          const entryMask = 1 << entryBit;
+          for (const [bitmap] of [...newDp]) {
+            if (
+              bitmap & entryMask &&
+              !evalBitmapExpr(
+                condition,
+                bitmap,
+                condSelectBitIndex,
+                condEntryBitIndex,
+                condNodeEntryBits,
+              )
+            ) {
+              newDp.delete(bitmap);
+            }
+          }
+        } else {
+          // Node-level: prune bitmaps where condition met but node not taken
+          const targetBit = 1 << condSelectBitIndex.get(targetId)!;
+          for (const [bitmap] of [...newDp]) {
+            if (
+              evalBitmapExpr(
+                condition,
+                bitmap,
+                condSelectBitIndex,
+                condEntryBitIndex,
+                condNodeEntryBits,
+              ) &&
+              !(bitmap & targetBit)
+            ) {
+              newDp.delete(bitmap);
+            }
           }
         }
       }
@@ -1008,15 +1113,26 @@ export function countTreeBuilds(
   // Warn only for fully-unresolvable cross-tree conditionals
   let hasUnresolvable = false;
   for (const [nodeId, c] of constraints) {
-    if (c.type !== "conditional" || !c.condition) continue;
     if (!tree.nodes.has(nodeId)) continue;
-    const refs = collectExprRefs(c.condition);
+
+    const conditions: BooleanExpr[] = [];
+    if (c.type === "conditional" && c.condition) {
+      conditions.push(c.condition);
+    } else if (c.type === "entry-conditional" && c.entryConditions) {
+      for (const ec of c.entryConditions) conditions.push(ec.condition);
+    }
+    if (conditions.length === 0) continue;
+
     let hasInTree = false;
-    for (const tid of refs.nodeIds) {
-      if (tree.nodes.has(tid)) {
-        hasInTree = true;
-        break;
+    for (const cond of conditions) {
+      const refs = collectExprRefs(cond);
+      for (const tid of refs.nodeIds) {
+        if (tree.nodes.has(tid)) {
+          hasInTree = true;
+          break;
+        }
       }
+      if (hasInTree) break;
     }
     if (!hasInTree) {
       hasUnresolvable = true;
