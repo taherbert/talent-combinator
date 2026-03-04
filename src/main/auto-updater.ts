@@ -9,11 +9,10 @@ export function initAutoUpdater(): void {
   autoUpdater.on("update-downloaded", (info) => {
     const win = BrowserWindow.getAllWindows()[0];
     if (win) win.webContents.send("update-downloaded", info.version);
+    ipcMain.once("install-update", () => autoUpdater.quitAndInstall());
   });
 
-  ipcMain.once("install-update", () => autoUpdater.quitAndInstall());
-
-  autoUpdater.on("error", () => {});
+  autoUpdater.on("error", (err) => console.error("[auto-updater]", err));
 
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch(() => {});
