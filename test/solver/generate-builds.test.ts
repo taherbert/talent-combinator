@@ -320,4 +320,85 @@ describe("conditional constraint generation", () => {
     expect(builds.length).toBe(Number(count));
     checkConditionalValidity(builds, 300, [100, 200], "and");
   });
+
+  it("negated: count matches generation for 'if A NOT selected → B'", () => {
+    const tree = makeTree([makeNode(1), makeNode(2), makeNode(3)], {
+      pointBudget: 2,
+    });
+    const negSel: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 1,
+      negated: true,
+    };
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: negSel }],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+    // When A (entry 100) absent → B (entry 200) must be present
+    for (const build of builds) {
+      const aPresent = (build.entries.get(100) ?? 0) > 0;
+      if (!aPresent) {
+        expect(build.entries.get(200) ?? 0).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("entry-specific: count matches generation for choice entry condition", () => {
+    const a = makeNode(1);
+    const b = makeNode(2);
+    const c = makeNode(3, {
+      type: "choice",
+      entries: [makeEntry(300), makeEntry(301)],
+    });
+    const tree = makeTree([a, b, c], { pointBudget: 2 });
+    const entryCond: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 3,
+      entryId: 300,
+    };
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: entryCond }],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+    // When entry 300 selected → B (entry 200) must be present
+    for (const build of builds) {
+      const entry300Present = (build.entries.get(300) ?? 0) > 0;
+      if (entry300Present) {
+        expect(build.entries.get(200) ?? 0).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("negated entry-specific: count matches generation", () => {
+    const a = makeNode(1);
+    const b = makeNode(2);
+    const c = makeNode(3, {
+      type: "choice",
+      entries: [makeEntry(300), makeEntry(301)],
+    });
+    const tree = makeTree([a, b, c], { pointBudget: 2 });
+    const negEntryCond: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 3,
+      entryId: 300,
+      negated: true,
+    };
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: negEntryCond }],
+    ]);
+    const { count } = countTreeBuilds(tree, constraints);
+    const builds = generateTreeBuilds(tree, constraints);
+    expect(builds.length).toBe(Number(count));
+    // When entry 300 NOT selected → B (entry 200) must be present
+    for (const build of builds) {
+      const entry300Present = (build.entries.get(300) ?? 0) > 0;
+      if (!entry300Present) {
+        expect(build.entries.get(200) ?? 0).toBeGreaterThan(0);
+      }
+    }
+  });
 });

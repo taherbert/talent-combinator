@@ -118,7 +118,7 @@ function traverse(
     if (tierIdx >= solverState.sortedTierKeys.length) {
       if (
         build.pointsSpent === tree.pointBudget &&
-        checkConstraints(solverState.constraints, build.selected)
+        checkConstraints(solverState.constraints, build.selected, build.entries)
       ) {
         onLeaf(build);
       }

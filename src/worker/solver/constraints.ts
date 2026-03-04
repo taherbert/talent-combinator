@@ -7,20 +7,29 @@ import type {
 export function evaluate(
   expr: BooleanExpr,
   selected: Map<number, number>,
+  entries?: Map<number, number>,
 ): boolean {
   switch (expr.op) {
-    case "TALENT_SELECTED":
-      return (selected.get(expr.nodeId) ?? 0) >= (expr.minRank ?? 1);
+    case "TALENT_SELECTED": {
+      let taken: boolean;
+      if (expr.entryId != null && entries) {
+        taken = (entries.get(expr.entryId) ?? 0) >= (expr.minRank ?? 1);
+      } else {
+        taken = (selected.get(expr.nodeId) ?? 0) >= (expr.minRank ?? 1);
+      }
+      return expr.negated ? !taken : taken;
+    }
     case "AND":
-      return expr.children.every((c) => evaluate(c, selected));
+      return expr.children.every((c) => evaluate(c, selected, entries));
     case "OR":
-      return expr.children.some((c) => evaluate(c, selected));
+      return expr.children.some((c) => evaluate(c, selected, entries));
   }
 }
 
 export function checkConstraints(
   constraints: Map<number, Constraint>,
   selected: Map<number, number>,
+  entries?: Map<number, number>,
 ): boolean {
   for (const [nodeId, constraint] of constraints) {
     const points = selected.get(nodeId) ?? 0;
@@ -36,7 +45,11 @@ export function checkConstraints(
         break;
       case "conditional":
         if (constraint.condition) {
-          const conditionMet = evaluate(constraint.condition, selected);
+          const conditionMet = evaluate(
+            constraint.condition,
+            selected,
+            entries,
+          );
           if (conditionMet && points === 0) return false;
         }
         break;

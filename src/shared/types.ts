@@ -115,7 +115,13 @@ export interface Specialization {
 export type BooleanExpr =
   | { op: "AND"; children: BooleanExpr[] }
   | { op: "OR"; children: BooleanExpr[] }
-  | { op: "TALENT_SELECTED"; nodeId: number; minRank?: number };
+  | {
+      op: "TALENT_SELECTED";
+      nodeId: number;
+      minRank?: number;
+      negated?: boolean;
+      entryId?: number;
+    };
 
 export type ConstraintType = "always" | "never" | "conditional";
 

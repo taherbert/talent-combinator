@@ -388,40 +388,71 @@ interface ConditionalConstraintInfo {
   condition: BooleanExpr;
 }
 
-function collectExprNodeIds(expr: BooleanExpr): Set<number> {
-  const ids = new Set<number>();
-  switch (expr.op) {
-    case "TALENT_SELECTED":
-      ids.add(expr.nodeId);
-      break;
-    case "AND":
-    case "OR":
-      for (const child of expr.children) {
-        for (const id of collectExprNodeIds(child)) ids.add(id);
-      }
-      break;
+interface ExprRefs {
+  nodeIds: Set<number>;
+  perEntryNodeIds: Set<number>;
+}
+
+function collectExprRefs(expr: BooleanExpr): ExprRefs {
+  const nodeIds = new Set<number>();
+  const perEntryNodeIds = new Set<number>();
+
+  function walk(e: BooleanExpr): void {
+    switch (e.op) {
+      case "TALENT_SELECTED":
+        nodeIds.add(e.nodeId);
+        if (e.entryId != null) perEntryNodeIds.add(e.nodeId);
+        break;
+      case "AND":
+      case "OR":
+        for (const child of e.children) walk(child);
+        break;
+    }
   }
-  return ids;
+
+  walk(expr);
+  return { nodeIds, perEntryNodeIds };
 }
 
 function evalBitmapExpr(
   expr: BooleanExpr,
   bitmap: number,
   condBit: Map<number, number>,
+  condEntryBit: Map<number, number>,
+  condNodeEntryBits: Map<number, number[]>,
 ): boolean {
   switch (expr.op) {
     case "TALENT_SELECTED": {
-      const bit = condBit.get(expr.nodeId);
-      if (bit == null) return false;
       // Bitmap only tracks "rank >= 1". For minRank > 1 we can't confirm
-      // the actual rank, so conservatively return false (condition not met).
-      if (expr.minRank != null && expr.minRank > 1) return false;
-      return (bitmap & (1 << bit)) !== 0;
+      // the actual rank, so assume not met; negation inverts accordingly.
+      if (expr.minRank != null && expr.minRank > 1) return !!expr.negated;
+
+      let taken: boolean;
+      if (expr.entryId != null) {
+        const bit = condEntryBit.get(expr.entryId);
+        if (bit == null) return false;
+        taken = (bitmap & (1 << bit)) !== 0;
+      } else {
+        const bit = condBit.get(expr.nodeId);
+        if (bit != null) {
+          taken = (bitmap & (1 << bit)) !== 0;
+        } else {
+          // Node tracked per-entry — check if ANY entry bit is set
+          const entryBits = condNodeEntryBits.get(expr.nodeId);
+          if (!entryBits) return false;
+          taken = entryBits.some((b) => (bitmap & (1 << b)) !== 0);
+        }
+      }
+      return expr.negated ? !taken : taken;
     }
     case "AND":
-      return expr.children.every((c) => evalBitmapExpr(c, bitmap, condBit));
+      return expr.children.every((c) =>
+        evalBitmapExpr(c, bitmap, condBit, condEntryBit, condNodeEntryBits),
+      );
     case "OR":
-      return expr.children.some((c) => evalBitmapExpr(c, bitmap, condBit));
+      return expr.children.some((c) =>
+        evalBitmapExpr(c, bitmap, condBit, condEntryBit, condNodeEntryBits),
+      );
   }
 }
 
@@ -429,11 +460,22 @@ function isValidBitmapForConstraints(
   bitmap: number,
   enforcements: ConditionalConstraintInfo[],
   condBit: Map<number, number>,
+  condEntryBit: Map<number, number>,
+  condNodeEntryBits: Map<number, number[]>,
 ): boolean {
   for (const { targetId, condition } of enforcements) {
     const bit = condBit.get(targetId);
     if (bit == null) continue;
-    if (evalBitmapExpr(condition, bitmap, condBit) && !(bitmap & (1 << bit))) {
+    if (
+      evalBitmapExpr(
+        condition,
+        bitmap,
+        condBit,
+        condEntryBit,
+        condNodeEntryBits,
+      ) &&
+      !(bitmap & (1 << bit))
+    ) {
       return false;
     }
   }
@@ -449,6 +491,8 @@ interface ConditionalSetup {
   condRetireAtIndex: Map<number, number[]>;
   ancestorRetireDelay: Map<number, number>;
   hasUnresolvable: boolean;
+  perEntryNodeIds: Set<number>;
+  nodeEntryIds: Map<number, number[]>;
 }
 
 function buildConditionalSetup(
@@ -469,16 +513,32 @@ function buildConditionalSetup(
   const allCondNodes = new Set<number>();
   const enforceAtIndex = new Map<number, ConditionalConstraintInfo[]>();
   const condRetireNodeIndex = new Map<number, number>();
+  const perEntryNodeIds = new Set<number>();
+  const nodeEntryIds = new Map<number, number[]>();
   let hasUnresolvable = false;
 
   for (const [nodeId, c] of constraints) {
     if (c.type !== "conditional" || !c.condition) continue;
     if (!tree.nodes.has(nodeId)) continue;
 
-    const triggerIds = collectExprNodeIds(c.condition);
+    const refs = collectExprRefs(c.condition);
     const inTreeTriggers = new Set<number>();
-    for (const tid of triggerIds) {
+    for (const tid of refs.nodeIds) {
       if (inTreeIds.has(tid)) inTreeTriggers.add(tid);
+    }
+
+    // Collect per-entry nodes that are in this tree
+    for (const nid of refs.perEntryNodeIds) {
+      if (inTreeIds.has(nid)) {
+        perEntryNodeIds.add(nid);
+        const node = tree.nodes.get(nid)!;
+        if (!nodeEntryIds.has(nid)) {
+          nodeEntryIds.set(
+            nid,
+            node.entries.map((e) => e.id),
+          );
+        }
+      }
     }
 
     if (inTreeTriggers.size === 0) {
@@ -507,7 +567,10 @@ function buildConditionalSetup(
 
   for (const nid of allCondNodes) {
     const node = tree.nodes.get(nid)!;
-    if (ancestorIds.has(nid) && node.maxRanks === 1) {
+    // Per-entry nodes always need separate bits (can't share ancestor bit)
+    if (perEntryNodeIds.has(nid)) {
+      needsSeparateBit.add(nid);
+    } else if (ancestorIds.has(nid) && node.maxRanks === 1) {
       sharesAncestorBit.add(nid);
     } else {
       needsSeparateBit.add(nid);
@@ -540,6 +603,8 @@ function buildConditionalSetup(
     condRetireAtIndex,
     ancestorRetireDelay,
     hasUnresolvable,
+    perEntryNodeIds,
+    nodeEntryIds,
   };
 }
 
@@ -587,6 +652,8 @@ function countDP(
   // Dynamic bit assignment: assign bit positions lazily and recycle retired ones.
   const ancestorBitIndex = new Map<number, number>();
   const condSelectBitIndex = new Map<number, number>();
+  const condEntryBitIndex = new Map<number, number>(); // entryId → bit
+  const condNodeEntryBits = new Map<number, number[]>(); // nodeId → [bit positions]
   const freeBits: number[] = [];
   let nextBit = 0;
 
@@ -645,8 +712,20 @@ function countDP(
     const toAssignCond = condSetup.condAssignAtIndex.get(i);
     if (toAssignCond) {
       for (const nodeId of toAssignCond) {
-        const bit = freeBits.length > 0 ? freeBits.pop()! : nextBit++;
-        condSelectBitIndex.set(nodeId, bit);
+        if (condSetup.perEntryNodeIds.has(nodeId)) {
+          // Per-entry tracking: one bit per entry
+          const entryIds = condSetup.nodeEntryIds.get(nodeId)!;
+          const bits: number[] = [];
+          for (const eid of entryIds) {
+            const bit = freeBits.length > 0 ? freeBits.pop()! : nextBit++;
+            condEntryBitIndex.set(eid, bit);
+            bits.push(bit);
+          }
+          condNodeEntryBits.set(nodeId, bits);
+        } else {
+          const bit = freeBits.length > 0 ? freeBits.pop()! : nextBit++;
+          condSelectBitIndex.set(nodeId, bit);
+        }
       }
     }
 
@@ -660,13 +739,15 @@ function countDP(
     const isNever = neverNodes.has(node.id);
     const isAlways = alwaysNodes.has(node.id) || node.freeNode;
     const constraint = constraints.get(node.id);
-    const selectBits = condSelectBitIndex.has(node.id)
-      ? 1 << condSelectBitIndex.get(node.id)!
-      : 0;
+    const isPerEntryTracked = condNodeEntryBits.has(node.id);
+    const selectBits =
+      !isPerEntryTracked && condSelectBitIndex.has(node.id)
+        ? 1 << condSelectBitIndex.get(node.id)!
+        : 0;
     const fullBits = ancestorBitIndex.has(node.id)
       ? 1 << ancestorBitIndex.get(node.id)!
       : 0;
-    const isTracked = selectBits !== 0 || fullBits !== 0;
+    const isTracked = selectBits !== 0 || fullBits !== 0 || isPerEntryTracked;
 
     if (isNever && isAlways) {
       return 0n;
@@ -697,7 +778,30 @@ function countDP(
       }
       const { skipPoly, selectPoly } = nodeResult;
 
-      if (isTracked) {
+      if (isPerEntryTracked) {
+        // Per-entry-tracked choice node: set entry-specific bit for each entry
+        const isFree = node.freeNode;
+        const entriesToUse =
+          constraint?.entryIndex != null
+            ? [node.entries[constraint.entryIndex]].filter(Boolean)
+            : node.entries;
+
+        if (!isAlways) {
+          mergePoly(newDp, bitmap, poly, budget);
+        }
+        for (const entry of entriesToUse) {
+          const entryBitMask = 1 << condEntryBitIndex.get(entry.id)!;
+          const cost = isFree ? 0 : entry.maxRanks;
+          const entryPoly: Poly = new Array(cost + 1).fill(0);
+          entryPoly[cost] = 1;
+          mergePoly(
+            newDp,
+            bitmap | entryBitMask | fullBits,
+            polyConvolve(poly, entryPoly, budget),
+            budget,
+          );
+        }
+      } else if (isTracked) {
         if (skipPoly != null) {
           mergePoly(newDp, bitmap, poly, budget);
         }
@@ -748,7 +852,13 @@ function countDP(
         const targetBit = 1 << condSelectBitIndex.get(targetId)!;
         for (const [bitmap] of [...newDp]) {
           if (
-            evalBitmapExpr(condition, bitmap, condSelectBitIndex) &&
+            evalBitmapExpr(
+              condition,
+              bitmap,
+              condSelectBitIndex,
+              condEntryBitIndex,
+              condNodeEntryBits,
+            ) &&
             !(bitmap & targetBit)
           ) {
             newDp.delete(bitmap);
@@ -781,16 +891,35 @@ function countDP(
     const toRetireCond = condSetup.condRetireAtIndex.get(i);
     if (toRetireCond) {
       for (const nodeId of toRetireCond) {
-        const bit = condSelectBitIndex.get(nodeId)!;
-        const mask = 1 << bit;
-        for (const [bitmap, poly] of [...newDp]) {
-          if (bitmap & mask) {
-            mergePoly(newDp, bitmap & ~mask, poly, budget);
-            newDp.delete(bitmap);
+        if (condNodeEntryBits.has(nodeId)) {
+          // Per-entry tracked: retire all entry bits
+          const entryBits = condNodeEntryBits.get(nodeId)!;
+          let combinedMask = 0;
+          for (const bit of entryBits) combinedMask |= 1 << bit;
+          for (const [bitmap, poly] of [...newDp]) {
+            if (bitmap & combinedMask) {
+              mergePoly(newDp, bitmap & ~combinedMask, poly, budget);
+              newDp.delete(bitmap);
+            }
           }
+          const entryIds = condSetup.nodeEntryIds.get(nodeId)!;
+          for (let j = 0; j < entryIds.length; j++) {
+            condEntryBitIndex.delete(entryIds[j]);
+            freeBits.push(entryBits[j]);
+          }
+          condNodeEntryBits.delete(nodeId);
+        } else {
+          const bit = condSelectBitIndex.get(nodeId)!;
+          const mask = 1 << bit;
+          for (const [bitmap, poly] of [...newDp]) {
+            if (bitmap & mask) {
+              mergePoly(newDp, bitmap & ~mask, poly, budget);
+              newDp.delete(bitmap);
+            }
+          }
+          condSelectBitIndex.delete(nodeId);
+          freeBits.push(bit);
         }
-        condSelectBitIndex.delete(nodeId);
-        freeBits.push(bit);
       }
     }
 
@@ -881,9 +1010,9 @@ export function countTreeBuilds(
   for (const [nodeId, c] of constraints) {
     if (c.type !== "conditional" || !c.condition) continue;
     if (!tree.nodes.has(nodeId)) continue;
-    const triggerIds = collectExprNodeIds(c.condition);
+    const refs = collectExprRefs(c.condition);
     let hasInTree = false;
-    for (const tid of triggerIds) {
+    for (const tid of refs.nodeIds) {
       if (tree.nodes.has(tid)) {
         hasInTree = true;
         break;
@@ -915,6 +1044,10 @@ interface TreeLayout {
   tierFirstIndex: Map<number, number>;
   budget: number;
   condSelectBitAssignment: Map<number, number>;
+  condEntryBitAssignment: Map<number, number>;
+  condNodeEntryBits: Map<number, number[]>;
+  perEntryNodeIds: Set<number>;
+  nodeEntryIds: Map<number, number[]>;
   condRetireAtIndex: Map<number, number[]>;
   enforceAtIndex: Map<number, ConditionalConstraintInfo[]>;
 }
@@ -979,6 +1112,8 @@ function computeLayout(
   // Simulate bit assignment with the same logic as countDP
   const permanentBitAssignment = new Map<number, number>();
   const condSelectBitAssignment = new Map<number, number>();
+  const condEntryBitAssignment = new Map<number, number>();
+  const condNodeEntryBits = new Map<number, number[]>();
   const freeBits: number[] = [];
   let nextBit = 0;
 
@@ -996,8 +1131,19 @@ function computeLayout(
     const toAssignCond = condSetup.condAssignAtIndex.get(i);
     if (toAssignCond) {
       for (const nodeId of toAssignCond) {
-        const bit = freeBits.length > 0 ? freeBits.pop()! : nextBit++;
-        condSelectBitAssignment.set(nodeId, bit);
+        if (condSetup.perEntryNodeIds.has(nodeId)) {
+          const entryIds = condSetup.nodeEntryIds.get(nodeId)!;
+          const bits: number[] = [];
+          for (const eid of entryIds) {
+            const bit = freeBits.length > 0 ? freeBits.pop()! : nextBit++;
+            condEntryBitAssignment.set(eid, bit);
+            bits.push(bit);
+          }
+          condNodeEntryBits.set(nodeId, bits);
+        } else {
+          const bit = freeBits.length > 0 ? freeBits.pop()! : nextBit++;
+          condSelectBitAssignment.set(nodeId, bit);
+        }
       }
     }
     const toRetire = retireAtIndex.get(i);
@@ -1009,7 +1155,13 @@ function computeLayout(
     const toRetireCond = condSetup.condRetireAtIndex.get(i);
     if (toRetireCond) {
       for (const nodeId of toRetireCond) {
-        freeBits.push(condSelectBitAssignment.get(nodeId)!);
+        if (condNodeEntryBits.has(nodeId)) {
+          for (const bit of condNodeEntryBits.get(nodeId)!) {
+            freeBits.push(bit);
+          }
+        } else {
+          freeBits.push(condSelectBitAssignment.get(nodeId)!);
+        }
       }
     }
   }
@@ -1034,6 +1186,10 @@ function computeLayout(
     tierFirstIndex,
     budget,
     condSelectBitAssignment,
+    condEntryBitAssignment,
+    condNodeEntryBits,
+    perEntryNodeIds: condSetup.perEntryNodeIds,
+    nodeEntryIds: condSetup.nodeEntryIds,
     condRetireAtIndex: condSetup.condRetireAtIndex,
     enforceAtIndex: condSetup.enforceAtIndex,
   };
@@ -1063,6 +1219,10 @@ function buildSuffixTables(
     tierFirstIndex,
     budget,
     condSelectBitAssignment,
+    condEntryBitAssignment,
+    condNodeEntryBits,
+    perEntryNodeIds,
+    nodeEntryIds,
     condRetireAtIndex,
     enforceAtIndex,
   } = layout;
@@ -1086,14 +1246,16 @@ function buildSuffixTables(
     const isAlways = alwaysNodes.has(node.id) || node.freeNode;
     const constraint = constraints.get(node.id);
     const isFree = node.freeNode;
-    const selectBits = condSelectBitAssignment.has(node.id)
-      ? 1 << condSelectBitAssignment.get(node.id)!
-      : 0;
+    const isPerEntryTracked = condNodeEntryBits.has(node.id);
+    const selectBits =
+      !isPerEntryTracked && condSelectBitAssignment.has(node.id)
+        ? 1 << condSelectBitAssignment.get(node.id)!
+        : 0;
     const fullBits = permanentBitAssignment.has(node.id)
       ? 1 << permanentBitAssignment.get(node.id)!
       : 0;
     const allBits = selectBits | fullBits;
-    const isTracked = allBits !== 0;
+    const isTracked = allBits !== 0 || isPerEntryTracked;
 
     const toRetire = retireAtIndex.get(i);
     let retireMask = 0;
@@ -1105,7 +1267,13 @@ function buildSuffixTables(
     const toRetireCond = condRetireAtIndex.get(i);
     if (toRetireCond) {
       for (const nodeId of toRetireCond) {
-        retireMask |= 1 << condSelectBitAssignment.get(nodeId)!;
+        if (condNodeEntryBits.has(nodeId)) {
+          for (const bit of condNodeEntryBits.get(nodeId)!) {
+            retireMask |= 1 << bit;
+          }
+        } else {
+          retireMask |= 1 << condSelectBitAssignment.get(nodeId)!;
+        }
       }
     }
 
@@ -1129,6 +1297,25 @@ function buildSuffixTables(
           bitmapsNeeded.add(bmBase | sub);
           if (sub === 0) break;
           sub = (sub - 1) & retireMask;
+        }
+      }
+      // Per-entry select path: entry-specific bits added
+      if (isPerEntryTracked) {
+        const entryIds = nodeEntryIds.get(node.id);
+        if (entryIds) {
+          for (const entryId of entryIds) {
+            const entryBit = 1 << condEntryBitAssignment.get(entryId)!;
+            const entryAllBits = fullBits | entryBit;
+            if (entryAllBits > 0 && (bmNext & entryAllBits) === entryAllBits) {
+              const bmBase = bmNext & ~entryAllBits;
+              sub = retireMask;
+              for (;;) {
+                bitmapsNeeded.add(bmBase | sub);
+                if (sub === 0) break;
+                sub = (sub - 1) & retireMask;
+              }
+            }
+          }
         }
       }
       // Partial select path (multi-rank ancestor with selectBits)
@@ -1171,6 +1358,8 @@ function buildSuffixTables(
                 bmAfter,
                 toEnforce,
                 condSelectBitAssignment,
+                condEntryBitAssignment,
+                condNodeEntryBits,
               )
             ) {
               total = suffixLookup(suffix[i + 1], bmAfter & ~retireMask, r);
@@ -1185,13 +1374,19 @@ function buildSuffixTables(
             for (const entry of entriesToUse) {
               const cost = isFree ? 0 : entry.maxRanks;
               if (r >= cost) {
-                const bmAfter = bitmapIn | selectBits | fullBits;
+                const entryBitPos = isPerEntryTracked
+                  ? condEntryBitAssignment.get(entry.id)
+                  : undefined;
+                const entryBitMask = entryBitPos != null ? 1 << entryBitPos : 0;
+                const bmAfter = bitmapIn | selectBits | fullBits | entryBitMask;
                 if (
                   !toEnforce ||
                   isValidBitmapForConstraints(
                     bmAfter,
                     toEnforce,
                     condSelectBitAssignment,
+                    condEntryBitAssignment,
+                    condNodeEntryBits,
                   )
                 ) {
                   total += suffixLookup(
@@ -1225,6 +1420,8 @@ function buildSuffixTables(
                     bmAfter,
                     toEnforce,
                     condSelectBitAssignment,
+                    condEntryBitAssignment,
+                    condNodeEntryBits,
                   )
                 ) {
                   total += suffixLookup(
@@ -1245,6 +1442,8 @@ function buildSuffixTables(
               bmSkip,
               toEnforce,
               condSelectBitAssignment,
+              condEntryBitAssignment,
+              condNodeEntryBits,
             )
           ) {
             total += suffixLookup(suffix[i + 1], bmSkip & ~retireMask, r);
@@ -1258,13 +1457,19 @@ function buildSuffixTables(
             for (const entry of entriesToUse) {
               const cost = isFree ? 0 : entry.maxRanks;
               if (r >= cost) {
-                const bmAfter = bitmapIn | selectBits | fullBits;
+                const entryBitPos = isPerEntryTracked
+                  ? condEntryBitAssignment.get(entry.id)
+                  : undefined;
+                const entryBitMask = entryBitPos != null ? 1 << entryBitPos : 0;
+                const bmAfter = bitmapIn | selectBits | fullBits | entryBitMask;
                 if (
                   !toEnforce ||
                   isValidBitmapForConstraints(
                     bmAfter,
                     toEnforce,
                     condSelectBitAssignment,
+                    condEntryBitAssignment,
+                    condNodeEntryBits,
                   )
                 ) {
                   total += suffixLookup(
@@ -1289,6 +1494,8 @@ function buildSuffixTables(
                     bmAfter,
                     toEnforce,
                     condSelectBitAssignment,
+                    condEntryBitAssignment,
+                    condNodeEntryBits,
                   )
                 ) {
                   total += suffixLookup(
@@ -1312,6 +1519,8 @@ function buildSuffixTables(
                       bmAfter,
                       toEnforce,
                       condSelectBitAssignment,
+                      condEntryBitAssignment,
+                      condNodeEntryBits,
                     )
                   ) {
                     total += suffixLookup(
@@ -1350,6 +1559,10 @@ function unrankBuild(
     permanentBitAssignment,
     budget,
     condSelectBitAssignment,
+    condEntryBitAssignment,
+    condNodeEntryBits,
+    perEntryNodeIds,
+    nodeEntryIds,
     condRetireAtIndex,
     enforceAtIndex,
   } = layout;
@@ -1364,9 +1577,11 @@ function unrankBuild(
     const isAlways = alwaysNodes.has(node.id) || node.freeNode;
     const constraint = constraints.get(node.id);
     const isFree = node.freeNode;
-    const selectBits = condSelectBitAssignment.has(node.id)
-      ? 1 << condSelectBitAssignment.get(node.id)!
-      : 0;
+    const isPerEntryTracked = condNodeEntryBits.has(node.id);
+    const selectBits =
+      !isPerEntryTracked && condSelectBitAssignment.has(node.id)
+        ? 1 << condSelectBitAssignment.get(node.id)!
+        : 0;
     const fullBits = permanentBitAssignment.has(node.id)
       ? 1 << permanentBitAssignment.get(node.id)!
       : 0;
@@ -1386,7 +1601,13 @@ function unrankBuild(
     const toRetireCond = condRetireAtIndex.get(i);
     if (toRetireCond) {
       for (const nodeId of toRetireCond) {
-        retireMask |= 1 << condSelectBitAssignment.get(nodeId)!;
+        if (condNodeEntryBits.has(nodeId)) {
+          for (const bit of condNodeEntryBits.get(nodeId)!) {
+            retireMask |= 1 << bit;
+          }
+        } else {
+          retireMask |= 1 << condSelectBitAssignment.get(nodeId)!;
+        }
       }
     }
 
@@ -1402,7 +1623,13 @@ function unrankBuild(
       let skipCount = 0;
       if (
         !toEnforce ||
-        isValidBitmapForConstraints(bmSkip, toEnforce, condSelectBitAssignment)
+        isValidBitmapForConstraints(
+          bmSkip,
+          toEnforce,
+          condSelectBitAssignment,
+          condEntryBitAssignment,
+          condNodeEntryBits,
+        )
       ) {
         skipCount = suffixLookup(suffix[i + 1], bmSkip & ~retireMask, r);
       }
@@ -1421,7 +1648,11 @@ function unrankBuild(
       for (const entry of entriesToUse) {
         const cost = isFree ? 0 : entry.maxRanks;
         if (r >= cost) {
-          const bmAfter = bitmap | selectBits | fullBits;
+          const entryBitPos = isPerEntryTracked
+            ? condEntryBitAssignment.get(entry.id)
+            : undefined;
+          const entryBitMask = entryBitPos != null ? 1 << entryBitPos : 0;
+          const bmAfter = bitmap | selectBits | fullBits | entryBitMask;
           let count = 0;
           if (
             !toEnforce ||
@@ -1429,6 +1660,8 @@ function unrankBuild(
               bmAfter,
               toEnforce,
               condSelectBitAssignment,
+              condEntryBitAssignment,
+              condNodeEntryBits,
             )
           ) {
             count = suffixLookup(
@@ -1471,6 +1704,8 @@ function unrankBuild(
               bmAfter,
               toEnforce,
               condSelectBitAssignment,
+              condEntryBitAssignment,
+              condNodeEntryBits,
             )
           ) {
             count = suffixLookup(

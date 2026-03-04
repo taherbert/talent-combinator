@@ -529,8 +529,27 @@ export class TalentTreeView {
       return node?.name ?? `Node ${nodeId}`;
     };
 
+    const entryName = (entryId: number, nodeId: number): string => {
+      const spec = state.activeSpec;
+      if (!spec) return `Entry ${entryId}`;
+      const node =
+        spec.classTree.nodes.get(nodeId) ??
+        spec.specTree.nodes.get(nodeId) ??
+        state.activeHeroTree?.nodes.get(nodeId);
+      if (node) {
+        const entry = node.entries.find((e) => e.id === entryId);
+        if (entry?.name) return entry.name;
+      }
+      return `Entry ${entryId}`;
+    };
+
     const format = (e: BooleanExpr): string => {
-      if (e.op === "TALENT_SELECTED") return name(e.nodeId);
+      if (e.op === "TALENT_SELECTED") {
+        let label =
+          e.entryId != null ? entryName(e.entryId, e.nodeId) : name(e.nodeId);
+        if (e.negated) label = `NOT ${label}`;
+        return label;
+      }
       const joiner = e.op === "AND" ? " and " : " or ";
       const parts = e.children.map((c) => {
         if (c.op !== "TALENT_SELECTED" && c.op !== e.op)
@@ -541,11 +560,16 @@ export class TalentTreeView {
     };
 
     const text = format(expr);
+    const hasNegated =
+      expr.op === "TALENT_SELECTED"
+        ? expr.negated
+        : expr.children?.some((c) => c.op === "TALENT_SELECTED" && c.negated);
     const singular =
       expr.op === "TALENT_SELECTED" ||
       (expr.op === "OR" &&
         expr.children.every((c) => c.op === "TALENT_SELECTED"));
-    return `if ${text} ${singular ? "is" : "are"} selected`;
+    const verb = hasNegated ? "" : singular ? " is selected" : " are selected";
+    return `if ${text}${verb}`;
   }
 
   private updateNodeStates(): void {

@@ -265,4 +265,124 @@ describe("conditional constraints", () => {
     );
     expect(hasCondWarning).toBe(false);
   });
+
+  it("negated: 'take B if A NOT selected'", () => {
+    // A, B, C — budget 2. Conditional: if A NOT selected → B must be selected.
+    // Builds: A+B, A+C, B+C.
+    // A+B: A selected, condition false → no enforcement. OK.
+    // A+C: A selected, condition false → no enforcement. OK.
+    // B+C: A not selected, condition true → B must be selected. B is. OK.
+    // All 3 survive → count = 3.
+    const tree = makeTree([makeNode(1), makeNode(2), makeNode(3)], {
+      pointBudget: 2,
+    });
+    const negSel: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 1,
+      negated: true,
+    };
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: negSel }],
+    ]);
+    expect(countTreeBuilds(tree, constraints).count).toBe(3n);
+  });
+
+  it("negated: forces target when trigger absent", () => {
+    // A (never), B, C — budget 1. Conditional: if A NOT selected → B.
+    // A is never → always absent. Condition always true → B forced.
+    // Budget 1: only {B}. Count = 1.
+    const tree = makeTree([makeNode(1), makeNode(2), makeNode(3)], {
+      pointBudget: 1,
+    });
+    const negSel: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 1,
+      negated: true,
+    };
+    const constraints = new Map<number, Constraint>([
+      [1, { nodeId: 1, type: "never" }],
+      [2, { nodeId: 2, type: "conditional", condition: negSel }],
+    ]);
+    expect(countTreeBuilds(tree, constraints).count).toBe(1n);
+  });
+
+  it("entry-specific: condition on specific choice entry", () => {
+    // Choice node C (entries 100, 101), single node B — budget 2.
+    // Conditional: if entry 100 of C selected → B must be selected.
+    // Without: C(100)+B, C(101)+B → 2 builds (budget forces both nodes).
+    // Actually let's use 3 nodes:
+    // A, B, C (choice with entries 300, 301) — budget 2.
+    // Builds: A+B, A+C(300), A+C(301), B+C(300), B+C(301) → 5 builds.
+    // Conditional: if entry 300 → B must be selected.
+    // A+B: no entry 300 → OK.
+    // A+C(300): entry 300, B not → INVALID.
+    // A+C(301): no entry 300 → OK.
+    // B+C(300): entry 300, B selected → OK.
+    // B+C(301): no entry 300 → OK.
+    // Count = 4.
+    const a = makeNode(1);
+    const b = makeNode(2);
+    const c = makeNode(3, {
+      type: "choice",
+      entries: [makeEntry(300), makeEntry(301)],
+    });
+    const tree = makeTree([a, b, c], { pointBudget: 2 });
+    const entryCond: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 3,
+      entryId: 300,
+    };
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: entryCond }],
+    ]);
+    expect(countTreeBuilds(tree, constraints).count).toBe(4n);
+  });
+
+  it("entry-specific: node-level ref still checks any entry", () => {
+    // Same setup but condition uses nodeId without entryId.
+    // Conditional: if C (any entry) → B must be selected.
+    // A+C(300): C selected, B not → INVALID.
+    // A+C(301): C selected, B not → INVALID.
+    // Others: A+B OK, B+C(300) OK, B+C(301) OK.
+    // Count = 3.
+    const a = makeNode(1);
+    const b = makeNode(2);
+    const c = makeNode(3, {
+      type: "choice",
+      entries: [makeEntry(300), makeEntry(301)],
+    });
+    const tree = makeTree([a, b, c], { pointBudget: 2 });
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: sel(3) }],
+    ]);
+    expect(countTreeBuilds(tree, constraints).count).toBe(3n);
+  });
+
+  it("negated + entry-specific: NOT entry 300", () => {
+    // A, B, C (choice: 300, 301) — budget 2.
+    // Conditional: if entry 300 NOT selected → B must be selected.
+    // A+B: entry 300 absent → B must be selected. B is. OK.
+    // A+C(300): entry 300 present → no enforcement. OK.
+    // A+C(301): entry 300 absent → B must be selected. B not. INVALID.
+    // B+C(300): entry 300 present → no enforcement. OK.
+    // B+C(301): entry 300 absent → B must be selected. B is. OK.
+    // Count = 4.
+    const a = makeNode(1);
+    const b = makeNode(2);
+    const c = makeNode(3, {
+      type: "choice",
+      entries: [makeEntry(300), makeEntry(301)],
+    });
+    const tree = makeTree([a, b, c], { pointBudget: 2 });
+    const negEntryCond: BooleanExpr = {
+      op: "TALENT_SELECTED",
+      nodeId: 3,
+      entryId: 300,
+      negated: true,
+    };
+    const constraints = new Map<number, Constraint>([
+      [2, { nodeId: 2, type: "conditional", condition: negEntryCond }],
+    ]);
+    expect(countTreeBuilds(tree, constraints).count).toBe(4n);
+  });
 });
