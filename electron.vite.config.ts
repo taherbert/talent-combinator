@@ -3,7 +3,7 @@ import { resolve } from "path";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["electron-updater"] })],
     build: {
       rollupOptions: {
         input: resolve(__dirname, "src/main/main.ts"),
