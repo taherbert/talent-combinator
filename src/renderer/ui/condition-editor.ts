@@ -4,6 +4,8 @@ import type { BooleanExpr, TalentNode, TalentTree } from "../../shared/types";
 interface TalentRef {
   nodeId: number;
   name: string;
+  entryId?: number;
+  negated?: boolean;
 }
 
 interface RuleGroup {
@@ -14,18 +16,34 @@ export class ConditionEditor {
   private panel: HTMLElement | null = null;
   private currentNode: TalentNode | null = null;
   private currentTree: TalentTree | null = null;
+  private entryIndex: number | null = null;
   private groups: RuleGroup[] = [];
   private mode: "any" | "all" = "any";
   private targetGroupIndex: number | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-  open(node: TalentNode, tree: TalentTree): void {
+  open(node: TalentNode, tree: TalentTree, entryIndex?: number): void {
     this.close();
     this.currentNode = node;
     this.currentTree = tree;
+    this.entryIndex = entryIndex ?? null;
 
     const existing = state.constraints.get(node.id);
-    if (existing?.type === "conditional" && existing.condition) {
+    if (
+      this.entryIndex != null &&
+      existing?.type === "entry-conditional" &&
+      existing.entryConditions
+    ) {
+      const ec = existing.entryConditions.find(
+        (e) => e.entryIndex === this.entryIndex,
+      );
+      if (ec) {
+        this.loadCondition(ec.condition);
+      } else {
+        this.groups = [];
+        this.mode = "any";
+      }
+    } else if (existing?.type === "conditional" && existing.condition) {
       this.loadCondition(existing.condition);
     } else {
       this.groups = [];
@@ -126,7 +144,16 @@ export class ConditionEditor {
 
   private refFromExpr(expr: BooleanExpr): TalentRef {
     if (expr.op !== "TALENT_SELECTED") return { nodeId: 0, name: "Unknown" };
-    return { nodeId: expr.nodeId, name: this.findNodeName(expr.nodeId) };
+    const { nodeId, entryId, negated } = expr;
+    return {
+      nodeId,
+      name:
+        entryId != null
+          ? this.findEntryName(entryId, nodeId)
+          : this.findNodeName(nodeId),
+      ...(entryId != null && { entryId }),
+      ...(negated && { negated }),
+    };
   }
 
   private collectLeaves(expr: BooleanExpr): TalentRef[] {
@@ -142,6 +169,25 @@ export class ConditionEditor {
       spec.specTree.nodes.get(nodeId) ??
       state.activeHeroTree?.nodes.get(nodeId);
     return node?.name ?? `Node ${nodeId}`;
+  }
+
+  private findEntryName(entryId: number, nodeId: number): string {
+    const node = this.findNode(nodeId);
+    if (node) {
+      const entry = node.entries.find((e) => e.id === entryId);
+      if (entry?.name) return entry.name;
+    }
+    return `Entry ${entryId}`;
+  }
+
+  private findNode(nodeId: number): TalentNode | undefined {
+    const spec = state.activeSpec;
+    if (!spec) return undefined;
+    return (
+      spec.classTree.nodes.get(nodeId) ??
+      spec.specTree.nodes.get(nodeId) ??
+      state.activeHeroTree?.nodes.get(nodeId)
+    );
   }
 
   private render(): void {
@@ -160,7 +206,12 @@ export class ConditionEditor {
 
     const title = document.createElement("span");
     title.className = "cond-title";
-    title.textContent = this.currentNode!.name;
+    if (this.entryIndex != null) {
+      const entry = this.currentNode!.entries[this.entryIndex];
+      title.textContent = `Conditional: ${entry?.name || this.currentNode!.name}`;
+    } else {
+      title.textContent = this.currentNode!.name;
+    }
     header.appendChild(title);
 
     const closeBtn = document.createElement("button");
@@ -287,11 +338,16 @@ export class ConditionEditor {
       }
 
       const chip = document.createElement("span");
-      chip.className = "cond-chip";
+      chip.className = `cond-chip${talent.negated ? " cond-chip-negated" : ""}`;
 
       const nameEl = document.createElement("span");
       nameEl.className = "cond-chip-name";
-      nameEl.textContent = talent.name;
+      nameEl.textContent = talent.negated ? `NOT ${talent.name}` : talent.name;
+      nameEl.title = "Click to toggle NOT";
+      nameEl.addEventListener("click", () => {
+        talent.negated = !talent.negated;
+        this.render();
+      });
       chip.appendChild(nameEl);
 
       const removeBtn = document.createElement("button");
@@ -365,18 +421,18 @@ export class ConditionEditor {
 
     const candidates = this.getCandidates();
 
-    const addTalent = (nodeId: number, name: string): void => {
+    const addTalent = (ref: TalentRef): void => {
       if (
         this.targetGroupIndex !== null &&
         this.targetGroupIndex < this.groups.length
       ) {
-        this.groups[this.targetGroupIndex].talents.push({ nodeId, name });
+        this.groups[this.targetGroupIndex].talents.push(ref);
       } else if (this.groups.length > 0) {
         // Add to last group
-        this.groups[this.groups.length - 1].talents.push({ nodeId, name });
+        this.groups[this.groups.length - 1].talents.push(ref);
       } else {
         // Create first group
-        this.groups.push({ talents: [{ nodeId, name }] });
+        this.groups.push({ talents: [ref] });
       }
       this.targetGroupIndex = null;
       this.render();
@@ -405,7 +461,7 @@ export class ConditionEditor {
         item.className = "cond-result-item";
         item.textContent = match.name;
         item.addEventListener("click", () => {
-          addTalent(match.nodeId, match.name);
+          addTalent({ ...match });
         });
         dropdown.appendChild(item);
       }
@@ -451,12 +507,15 @@ export class ConditionEditor {
   private getCandidates(): TalentRef[] {
     if (!this.currentTree) return [];
 
-    // Only exclude talents already in the target group (allow cross-group reuse)
-    const excludeIds = new Set<number>();
+    // Exclude talents already in the target group (allow cross-group reuse).
+    // Use composite key to distinguish entry-specific refs from whole-node refs.
+    const excludeKeys = new Set<string>();
     const gi = this.targetGroupIndex ?? this.groups.length - 1;
     if (gi >= 0 && gi < this.groups.length) {
       for (const t of this.groups[gi].talents) {
-        excludeIds.add(t.nodeId);
+        excludeKeys.add(
+          t.entryId != null ? `${t.nodeId}:${t.entryId}` : `${t.nodeId}`,
+        );
       }
     }
 
@@ -475,8 +534,31 @@ export class ConditionEditor {
     for (const tree of trees) {
       for (const node of tree.nodes.values()) {
         if (node.id === this.currentNode!.id) continue;
-        if (excludeIds.has(node.id)) continue;
-        result.push({ nodeId: node.id, name: node.name });
+
+        const hasDistinctChoices =
+          node.type === "choice" &&
+          !node.isApex &&
+          new Set(node.entries.map((e) => e.name || e.id)).size > 1;
+
+        if (hasDistinctChoices) {
+          for (const entry of node.entries) {
+            const key = `${node.id}:${entry.id}`;
+            if (!excludeKeys.has(key)) {
+              result.push({
+                nodeId: node.id,
+                name: entry.name,
+                entryId: entry.id,
+              });
+            }
+          }
+          if (!excludeKeys.has(`${node.id}`)) {
+            result.push({ nodeId: node.id, name: `${node.name} (either)` });
+          }
+        } else {
+          if (!excludeKeys.has(`${node.id}`)) {
+            result.push({ nodeId: node.id, name: node.name });
+          }
+        }
       }
     }
 
@@ -492,7 +574,28 @@ export class ConditionEditor {
     clearBtn.className = "btn btn-secondary cond-btn";
     clearBtn.textContent = "Clear";
     clearBtn.addEventListener("click", () => {
-      state.removeConstraint(this.currentNode!.id);
+      if (this.entryIndex != null) {
+        const existing = state.constraints.get(this.currentNode!.id);
+        if (
+          existing?.type === "entry-conditional" &&
+          existing.entryConditions
+        ) {
+          const remaining = existing.entryConditions.filter(
+            (ec) => ec.entryIndex !== this.entryIndex,
+          );
+          if (remaining.length > 0) {
+            state.setConstraint({
+              nodeId: this.currentNode!.id,
+              type: "entry-conditional",
+              entryConditions: remaining,
+            });
+          } else {
+            state.removeConstraint(this.currentNode!.id);
+          }
+        }
+      } else {
+        state.removeConstraint(this.currentNode!.id);
+      }
       this.close();
     });
     footer.appendChild(clearBtn);
@@ -521,8 +624,11 @@ export class ConditionEditor {
     return footer;
   }
 
-  private talentLeaf(nodeId: number): BooleanExpr {
-    return { op: "TALENT_SELECTED", nodeId };
+  private talentLeaf(ref: TalentRef): BooleanExpr {
+    const leaf: BooleanExpr = { op: "TALENT_SELECTED", nodeId: ref.nodeId };
+    if (ref.negated) leaf.negated = true;
+    if (ref.entryId != null) leaf.entryId = ref.entryId;
+    return leaf;
   }
 
   private save(): void {
@@ -535,10 +641,10 @@ export class ConditionEditor {
     const innerOp: "AND" | "OR" = this.mode === "any" ? "AND" : "OR";
 
     const groupToExpr = (g: RuleGroup): BooleanExpr => {
-      if (g.talents.length === 1) return this.talentLeaf(g.talents[0].nodeId);
+      if (g.talents.length === 1) return this.talentLeaf(g.talents[0]);
       return {
         op: innerOp,
-        children: g.talents.map((t) => this.talentLeaf(t.nodeId)),
+        children: g.talents.map((t) => this.talentLeaf(t)),
       };
     };
 
@@ -549,10 +655,27 @@ export class ConditionEditor {
       condition = { op: outerOp, children: nonEmpty.map(groupToExpr) };
     }
 
-    state.setConstraint({
-      nodeId: this.currentNode.id,
-      type: "conditional",
-      condition,
-    });
+    if (this.entryIndex != null) {
+      // Per-entry conditional: merge with existing entryConditions
+      const existing = state.constraints.get(this.currentNode.id);
+      const others =
+        existing?.type === "entry-conditional" && existing.entryConditions
+          ? existing.entryConditions.filter(
+              (ec) => ec.entryIndex !== this.entryIndex,
+            )
+          : [];
+      others.push({ entryIndex: this.entryIndex, condition });
+      state.setConstraint({
+        nodeId: this.currentNode.id,
+        type: "entry-conditional",
+        entryConditions: others,
+      });
+    } else {
+      state.setConstraint({
+        nodeId: this.currentNode.id,
+        type: "conditional",
+        condition,
+      });
+    }
   }
 }

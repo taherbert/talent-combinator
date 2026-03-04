@@ -930,6 +930,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 180px;
+  cursor: pointer;
+}
+
+.cond-chip-negated {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--color-red) 40%, var(--border-default));
 }
 
 .cond-chip-remove {

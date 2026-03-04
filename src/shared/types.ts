@@ -115,9 +115,24 @@ export interface Specialization {
 export type BooleanExpr =
   | { op: "AND"; children: BooleanExpr[] }
   | { op: "OR"; children: BooleanExpr[] }
-  | { op: "TALENT_SELECTED"; nodeId: number; minRank?: number };
+  | {
+      op: "TALENT_SELECTED";
+      nodeId: number;
+      minRank?: number;
+      negated?: boolean;
+      entryId?: number;
+    };
 
-export type ConstraintType = "always" | "never" | "conditional";
+export type ConstraintType =
+  | "always"
+  | "never"
+  | "conditional"
+  | "entry-conditional";
+
+export interface EntryCondition {
+  entryIndex: number;
+  condition: BooleanExpr;
+}
 
 export interface Constraint {
   nodeId: number;
@@ -125,6 +140,7 @@ export interface Constraint {
   entryIndex?: number; // For choice nodes: which entry (0 or 1)
   exactRank?: number; // For multi-rank: specific rank desired
   condition?: BooleanExpr;
+  entryConditions?: EntryCondition[]; // For "entry-conditional": per-entry conditions
 }
 
 export type NodeState =

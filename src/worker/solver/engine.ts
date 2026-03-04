@@ -5,7 +5,7 @@ import type {
   Build,
   SolverResult,
 } from "../../shared/types";
-import { checkConstraints, getNodesByType } from "./constraints";
+import { checkConstraints, evaluate, getNodesByType } from "./constraints";
 import { encodeBuild } from "./encoder";
 
 interface SolverState {
@@ -118,7 +118,7 @@ function traverse(
     if (tierIdx >= solverState.sortedTierKeys.length) {
       if (
         build.pointsSpent === tree.pointBudget &&
-        checkConstraints(solverState.constraints, build.selected)
+        checkConstraints(solverState.constraints, build.selected, build.entries)
       ) {
         onLeaf(build);
       }
@@ -174,10 +174,23 @@ function traverse(
         enumerateTier(tierIdx, nodeIdx + 1, tierNodes, bSkip);
       }
 
-      const entriesToTry =
-        constraint?.entryIndex != null
-          ? [node.entries[constraint.entryIndex]].filter(Boolean)
-          : node.entries;
+      let entriesToTry: typeof node.entries;
+      if (constraint?.entryIndex != null) {
+        entriesToTry = [node.entries[constraint.entryIndex]].filter(Boolean);
+      } else if (
+        constraint?.type === "entry-conditional" &&
+        constraint.entryConditions
+      ) {
+        const condMap = new Map(
+          constraint.entryConditions.map((ec) => [ec.entryIndex, ec.condition]),
+        );
+        entriesToTry = node.entries.filter((_, i) => {
+          const cond = condMap.get(i);
+          return !cond || evaluate(cond, build.selected, build.entries);
+        });
+      } else {
+        entriesToTry = node.entries;
+      }
 
       for (const entry of entriesToTry) {
         const b = cloneBuild(build);

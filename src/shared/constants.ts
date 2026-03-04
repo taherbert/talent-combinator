@@ -7,7 +7,7 @@ export const WOWHEAD_TOOLTIP_URL = "https://nether.wowhead.com/tooltip/spell";
 
 export const MAX_PROFILESETS = 6399;
 
-export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 export const COUNT_THRESHOLDS = {
   green: 1000,

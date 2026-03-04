@@ -279,21 +279,30 @@ export class TalentTreeView {
         new Set(node.entries.map((e) => e.name || e.id)).size > 1;
 
       if (hasDistinctChoices) {
-        // Choice node: one button per entry
+        // Choice node: always + conditional buttons per entry
         for (let i = 0; i < node.entries.length; i++) {
           const entry = node.entries[i];
           const entryName = entry.name || `Choice ${i + 1}`;
-          const active =
+          const alwaysActive =
             current?.type === "always" && current.entryIndex === i
               ? "active-always"
               : null;
-          addBtn(`Always: ${entryName}`, active, () =>
+          addBtn(`Always: ${entryName}`, alwaysActive, () =>
             state.setConstraint({
               nodeId: node.id,
               type: "always",
               entryIndex: i,
             }),
           );
+          const condActive =
+            current?.type === "entry-conditional" &&
+            current.entryConditions?.some((ec) => ec.entryIndex === i)
+              ? "active-conditional"
+              : null;
+          addBtn(`Conditional: ${entryName}`, condActive, () => {
+            this.closeRankPopover();
+            this.conditionEditor.open(node, this.tree!, i);
+          });
         }
 
         const anyActive =
@@ -441,6 +450,18 @@ export class TalentTreeView {
         condEl.className = "tooltip-condition";
         condEl.textContent = this.conditionText(constraint.condition);
         tooltip.appendChild(condEl);
+      } else if (
+        constraint.type === "entry-conditional" &&
+        constraint.entryConditions
+      ) {
+        for (const ec of constraint.entryConditions) {
+          const entryName =
+            node.entries[ec.entryIndex]?.name || `Entry ${ec.entryIndex + 1}`;
+          const condEl = document.createElement("div");
+          condEl.className = "tooltip-condition";
+          condEl.textContent = `${entryName}: ${this.conditionText(ec.condition)}`;
+          tooltip.appendChild(condEl);
+        }
       }
     }
 
@@ -505,6 +526,15 @@ export class TalentTreeView {
   private constraintLabel(constraint: Constraint, node: TalentNode): string {
     if (constraint.type === "never") return "never";
     if (constraint.type === "conditional") return "conditional";
+    if (constraint.type === "entry-conditional") {
+      const names = constraint.entryConditions
+        ?.map(
+          (ec) =>
+            node.entries[ec.entryIndex]?.name || `Entry ${ec.entryIndex + 1}`,
+        )
+        .join(", ");
+      return `conditional: ${names}`;
+    }
     if (constraint.type !== "always") return constraint.type;
     if (constraint.entryIndex != null) {
       const entryName =
@@ -529,8 +559,27 @@ export class TalentTreeView {
       return node?.name ?? `Node ${nodeId}`;
     };
 
+    const entryName = (entryId: number, nodeId: number): string => {
+      const spec = state.activeSpec;
+      if (!spec) return `Entry ${entryId}`;
+      const node =
+        spec.classTree.nodes.get(nodeId) ??
+        spec.specTree.nodes.get(nodeId) ??
+        state.activeHeroTree?.nodes.get(nodeId);
+      if (node) {
+        const entry = node.entries.find((e) => e.id === entryId);
+        if (entry?.name) return entry.name;
+      }
+      return `Entry ${entryId}`;
+    };
+
     const format = (e: BooleanExpr): string => {
-      if (e.op === "TALENT_SELECTED") return name(e.nodeId);
+      if (e.op === "TALENT_SELECTED") {
+        let label =
+          e.entryId != null ? entryName(e.entryId, e.nodeId) : name(e.nodeId);
+        if (e.negated) label = `NOT ${label}`;
+        return label;
+      }
       const joiner = e.op === "AND" ? " and " : " or ";
       const parts = e.children.map((c) => {
         if (c.op !== "TALENT_SELECTED" && c.op !== e.op)
@@ -541,11 +590,13 @@ export class TalentTreeView {
     };
 
     const text = format(expr);
+    const hasNegated = text.includes("NOT ");
     const singular =
       expr.op === "TALENT_SELECTED" ||
       (expr.op === "OR" &&
         expr.children.every((c) => c.op === "TALENT_SELECTED"));
-    return `if ${text} ${singular ? "is" : "are"} selected`;
+    const verb = hasNegated ? "" : singular ? " is selected" : " are selected";
+    return `if ${text}${verb}`;
   }
 
   private updateNodeStates(): void {
@@ -564,7 +615,10 @@ export class TalentTreeView {
       } else if (constraint?.type === "always" && state.isImplied(nodeId)) {
         nodeState = "implied";
       } else {
-        nodeState = constraint?.type ?? "available";
+        nodeState =
+          constraint?.type === "entry-conditional"
+            ? "conditional"
+            : (constraint?.type ?? "available");
       }
       const hasError = state.triggerNodeId === nodeId;
       view.setState(nodeState, constraint, hasError);
@@ -618,7 +672,11 @@ export class TalentTreeView {
       const cost = node.freeNode ? 0 : (constraint.exactRank ?? node.maxRanks);
       if (constraint.type === "always") always += cost;
       else if (constraint.type === "never") never += cost;
-      else if (constraint.type === "conditional") conditional += cost;
+      else if (
+        constraint.type === "conditional" ||
+        constraint.type === "entry-conditional"
+      )
+        conditional += cost;
     }
 
     const parts: string[] = [];
